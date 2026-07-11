@@ -66,7 +66,7 @@ machine. Verify one at any time with `python backup.py verify <file>`.
 - **It does not encrypt secrets in memory.** While the vault is unlocked, the master key lives in
   the process. Root on the host can read it.
 - **It is not multi-tenant.** One hub, one owner. There are no per-user permissions.
-- **It has not been independently audited.** It is written carefully and it is tested — 65
+- **It has not been independently audited.** It is written carefully and it is tested — 67
   automated tests, including the attack paths above — but no third party has reviewed it. Judge it
   accordingly.
 

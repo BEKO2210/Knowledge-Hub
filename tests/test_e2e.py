@@ -54,12 +54,19 @@ def browser():
 
 @pytest.fixture
 def seite(browser, hub, fresh_vault):
-    ctx = browser.new_context(viewport={"width": 1280, "height": 880})
+    """Deterministisch deutsch.
+
+    Die Oberfläche richtet sich sonst nach der Browsersprache — auf einem deutschen
+    Rechner startete sie deutsch, in CI englisch. Genau daran sind drei Tests
+    zerbrochen. Die Sprache wird darum hier festgenagelt, nicht dem Zufall überlassen.
+    """
+    ctx = browser.new_context(viewport={"width": 1280, "height": 880}, locale="en-US")
     page = ctx.new_page()
     page.fehler = []
     page.on("pageerror", lambda e: page.fehler.append(str(e)))
     page.on("requestfailed", lambda r: page.fehler.append(f"Request fehlgeschlagen: {r.url}"))
-    page.add_init_script("try{localStorage.setItem('kmcp_toured','1')}catch(e){}")
+    page.add_init_script(
+        "try{localStorage.setItem('kmcp_toured','1');localStorage.setItem('kmcp_lang','de')}catch(e){}")
     page.goto(f"{hub}/ui", wait_until="networkidle")
     yield page
     ctx.close()
@@ -151,9 +158,10 @@ def test_theme_und_sprache_umschalten(seite):
 @pytest.mark.parametrize("breite,modus", [(390, "bottom"), (1280, "desktop")])
 def test_kopfleiste_bricht_auf_keiner_breite(browser, hub, fresh_vault, breite, modus):
     """Regressionsschutz für den reparierten Header: nie horizontaler Überlauf."""
-    ctx = browser.new_context(viewport={"width": breite, "height": 880})
+    ctx = browser.new_context(viewport={"width": breite, "height": 880}, locale="en-US")
     page = ctx.new_page()
-    page.add_init_script("try{localStorage.setItem('kmcp_toured','1')}catch(e){}")
+    page.add_init_script(
+        "try{localStorage.setItem('kmcp_toured','1');localStorage.setItem('kmcp_lang','de')}catch(e){}")
     page.goto(f"{hub}/ui", wait_until="networkidle")
     page.fill("#pw", TEST_PASSWORD)
     page.click("#loginbtn")
@@ -196,3 +204,19 @@ def test_verbindungsabbruch_erscheint_als_banner(seite):
     seite.evaluate("() => { api('/ui/api/health').catch(() => {}); }")
     seite.wait_for_selector("#errbanner.on", timeout=5000)
     assert "Keine Verbindung" in seite.inner_text("#errbanner")
+
+
+@pytest.mark.parametrize("locale,erwartet", [("en-US", "en"), ("de-DE", "de")])
+def test_browsersprache_bestimmt_die_startsprache(browser, hub, fresh_vault, locale, erwartet):
+    """Ein Franzose soll Englisch sehen, ein Deutscher Deutsch — ohne einen Klick.
+
+    Dieser Test hätte den CI-Fehler sofort gezeigt: Lokal (deutscher Rechner) startete
+    die Oberfläche deutsch, in CI englisch — und drei Tests suchten die falschen Texte.
+    """
+    ctx = browser.new_context(locale=locale)
+    page = ctx.new_page()
+    page.add_init_script("try{localStorage.removeItem('kmcp_lang');localStorage.setItem('kmcp_toured','1')}catch(e){}")
+    page.goto(f"{hub}/ui", wait_until="networkidle")
+    page.wait_for_timeout(400)
+    assert page.evaluate("LANG") == erwartet
+    ctx.close()

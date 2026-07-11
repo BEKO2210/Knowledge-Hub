@@ -10,7 +10,7 @@ pip install -r requirements-dev.txt
 playwright install chromium
 
 ruff check .   # must be clean
-pytest         # all 65 must pass
+pytest         # all 67 must pass
 ```
 
 Both run in CI, so a red build is a red PR.
