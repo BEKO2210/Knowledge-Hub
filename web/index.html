@@ -1,0 +1,585 @@
+<!doctype html>
+<html lang="de"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#0e1526">
+<link rel="icon" type="image/png" href="/ui/static/favicon.png">
+<link rel="apple-touch-icon" href="/ui/static/icon-192.png">
+<link rel="manifest" href="/ui/manifest.json">
+<title>__BRAND__</title>
+<link rel="stylesheet" href="/ui/asset/app.css?v=__V__">
+</head><body>
+<svg style="display:none" aria-hidden="true"><defs>
+<g id="i-graph"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.59 13.51 6.83 3.98M15.41 6.51l-6.82 3.98"/></g>
+<g id="i-key"><path d="M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z"/><circle cx="16.5" cy="7.5" r=".5" fill="currentColor"/></g>
+<g id="i-scroll"><path d="M15 12h-5M15 8h-5"/><path d="M19 17V5a2 2 0 0 0-2-2H4"/><path d="M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3"/></g>
+<g id="i-logout"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5M21 12H9"/></g>
+<g id="i-search"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></g>
+<g id="i-eye"><path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/><circle cx="12" cy="12" r="3"/></g>
+<g id="i-eyeoff"><path d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49"/><path d="M14.084 14.158a3 3 0 0 1-4.242-4.242"/><path d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143"/><path d="m2 2 20 20"/></g>
+<g id="i-copy"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></g>
+<g id="i-trash"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6h14zM10 11v6M14 11v6"/></g>
+<g id="i-plus"><path d="M12 5v14M5 12h14"/></g>
+<g id="i-doc"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></g>
+<g id="i-fit"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></g>
+<g id="i-x"><path d="M18 6 6 18M6 6l12 12"/></g>
+<g id="i-refresh"><path d="M3 12a9 9 0 0 1 15-6.7L21 8M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M21 3v5h-5M3 21v-5h5"/></g>
+<g id="i-spark"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z"/><path d="M20 3v4M22 5h-4"/></g>
+<g id="i-check"><path d="M20 6 9 17l-5-5"/></g>
+<g id="i-alert"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></g>
+<g id="i-back"><path d="m15 18-6-6 6-6"/></g>
+<g id="i-zin"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3M11 8v6M8 11h6"/></g>
+<g id="i-zout"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3M8 11h6"/></g>
+<g id="i-lock"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></g>
+<linearGradient id="g-a" gradientUnits="userSpaceOnUse" x1="0" y1="24" x2="0" y2="0">
+  <stop stop-color="#22c55e"/><stop offset="1" stop-color="#60a5fa"/>
+</linearGradient>
+<linearGradient id="g-b" gradientUnits="userSpaceOnUse" x1="0" y1="24" x2="0" y2="0">
+  <stop stop-color="#60a5fa"/><stop offset="1" stop-color="#c084fc"/>
+  <animateTransform attributeName="gradientTransform" type="rotate" dur="8s"
+    repeatCount="indefinite" values="0 12 12;360 12 12"/>
+</linearGradient>
+<g id="i-moon"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9z"/></g>
+<g id="i-sun"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></g>
+<g id="i-folder"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2z"/></g>
+<g id="i-play"><polygon points="6 3 20 12 6 21 6 3"/></g>
+<g id="i-clock"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></g>
+<g id="i-coins"><circle cx="8" cy="8" r="6"/><path d="M18.09 10.37A6 6 0 1 1 10.34 18M7 6h1v4M16.71 13.88l.7.71-2.82 2.82"/></g>
+<g id="i-pulse"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></g>
+<g id="i-wrench"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></g>
+<g id="i-devices"><rect x="2" y="4" width="14" height="11" rx="2"/><path d="M6 19h6"/><rect x="17" y="9" width="5" height="11" rx="1.5"/></g>
+<g id="i-shield"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></g>
+<g id="i-shieldcheck"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></g>
+<g id="i-bot"><rect x="3" y="8" width="18" height="12" rx="2"/><path d="M12 2v4M8 14h.01M16 14h.01M2 13h1M21 13h1"/></g>
+<g id="i-more"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></g>
+<g id="i-send"><path d="M22 2 11 13M22 2l-7 20-4-9-9-4z"/></g>
+<g id="i-file2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></g>
+<g id="i-link"><path d="M9 17H7A5 5 0 0 1 7 7h2"/><path d="M15 7h2a5 5 0 1 1 0 10h-2"/><path d="M8 12h8"/></g>
+<g id="i-qr"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3M21 21v.01M17 21h.01M21 17h.01"/></g>
+<g id="i-help"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/></g>
+<g id="i-globe"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 0 20 15.3 15.3 0 0 1 0-20z"/></g>
+</defs></svg>
+
+<div id="login">
+  <form onsubmit="doLogin(event)">
+    <div class="logo"><img src="/ui/static/icon-192.png" alt="" width="56" height="56" style="border-radius:14px">__BRAND_HTML__</div>
+    <p class="sub" data-en="Knowledge graphs &amp; secrets vault">Wissensgraphen &amp; Secrets-Vault</p>
+    <p class="err" id="loginerr" role="alert"></p>
+    <div class="pwwrap" id="pwrow">
+      <label for="pw" style="position:absolute;width:1px;height:1px;overflow:hidden" data-en="Password">Zugangspasswort</label>
+      <input type="password" id="pw" placeholder="Zugangspasswort" data-en-ph="Password" autocomplete="current-password" required>
+      <button type="button" aria-label="Passwort anzeigen" data-en-title="Show password" onclick="togglePw('pw',this)"><svg class="ic" viewBox="0 0 24 24"><use href="#i-eye"/></svg></button>
+    </div>
+    <div id="coderow" style="display:none">
+      <label for="code" style="font-size:.82rem;color:var(--mut);display:block;margin-bottom:.4rem" data-en="Code from your authenticator app">
+        Code aus deiner Authenticator-App</label>
+      <input id="code" placeholder="6-stelliger Code" data-en-ph="6-digit code" inputmode="numeric" autocomplete="one-time-code"
+             maxlength="9" style="text-align:center;letter-spacing:.15em;font-size:1.15rem">
+      <p style="color:var(--mut2);font-size:.76rem;margin:.5rem 0 0" data-en="No access to the app? Enter one of your recovery codes.">
+        Kein Zugriff auf die App? Gib einen deiner Wiederherstellungscodes ein.</p>
+    </div>
+    <button class="btn" id="loginbtn"><svg class="ic" viewBox="0 0 24 24"><use href="#i-lock"/></svg><span data-en="Sign in">Anmelden</span></button>
+  </form>
+</div>
+
+<header>
+  <div class="logo"><img src="/ui/static/icon-192.png" alt="" width="30" height="30" style="border-radius:8px"><span class="brandtext">__BRAND_HTML__</span></div>
+  <nav class="desktop" aria-label="Hauptnavigation" data-en-title="Main navigation">
+    <button data-tab="graph" class="on" onclick="tab('graph')"><svg class="ic" viewBox="0 0 24 24"><use href="#i-graph"/></svg><span data-en="Graphs">Graphen</span></button>
+    <button data-tab="ask" onclick="tab('ask')"><svg class="ic" viewBox="0 0 24 24"><use href="#i-spark"/></svg><span data-en="Ask">Fragen</span></button>
+    <button data-tab="secrets" onclick="tab('secrets')"><svg class="ic" viewBox="0 0 24 24"><use href="#i-key"/></svg><span data-en="Secrets">Secrets</span></button>
+    <button data-tab="mapping" onclick="tab('mapping')"><svg class="ic" viewBox="0 0 24 24"><use href="#i-moon"/></svg><span data-en="Mapping">Mapping</span></button>
+    <button data-tab="connect" onclick="tab('connect')"><svg class="ic" viewBox="0 0 24 24"><use href="#i-link"/></svg><span data-en="Connect">Verbinden</span></button>
+    <button id="navmore" onclick="openMore()" aria-haspopup="dialog"><svg class="ic" viewBox="0 0 24 24"><use href="#i-more"/></svg><span data-en="More">Mehr</span></button>
+  </nav>
+  <button id="langbtn" onclick="toggleLang()" aria-label="Sprache umschalten" title="Sprache / Language" data-en-title="Switch language">EN</button>
+  <button id="themebtn" onclick="toggleTheme()" aria-label="Design umschalten" title="Hell/Dunkel" data-en-title="Light / dark"><svg class="ic" viewBox="0 0 24 24"><use href="#i-moon"/></svg></button>
+  <button id="helpbtn" onclick="startTour()" aria-label="Hilfe & Einführung" title="Hilfe & Einführung" data-en-title="Help &amp; tour"><svg class="ic" viewBox="0 0 24 24"><use href="#i-help"/></svg></button>
+  <button id="logoutbtn" onclick="logout()" aria-label="Abmelden" data-en-title="Sign out"><svg class="ic" viewBox="0 0 24 24"><use href="#i-logout"/></svg><span data-en="Sign out">Abmelden</span></button>
+</header>
+
+<main>
+  <!-- GRAPH -->
+  <section class="tab on" id="tab-graph" aria-label="Wissensgraphen" data-en-title="Knowledge graphs">
+    <div id="graphbar">
+      <select id="proj" onchange="loadGraph()" aria-label="Projekt wählen" data-en-title="Select project"></select>
+      <div class="searchwrap">
+        <svg class="ic" viewBox="0 0 24 24"><use href="#i-search"/></svg>
+        <input id="search" placeholder="Knoten suchen…" data-en-ph="Search nodes…" oninput="searchChanged(this.value)"
+               onkeydown="searchKey(event)" onfocus="searchChanged(this.value)" onblur="hideSearchDropSoon()"
+               autocomplete="off" role="combobox" aria-expanded="false" aria-controls="searchdrop">
+      </div>
+      <div id="limitwrap"><span id="limlbl">2000</span>
+        <input type="range" id="limit" min="100" max="2000" step="50" value="2000" aria-label="Anzahl Knoten" data-en-title="Number of nodes"
+               oninput="limlbl.textContent=(+this.value>=+this.max)?'Alle':this.value;limitChanged()">
+      </div>
+      <button class="btn ghost icon" onclick="showReport()" aria-label="Report anzeigen" data-en-title="Show report"><svg class="ic" viewBox="0 0 24 24"><use href="#i-doc"/></svg></button>
+      <span id="stats"></span>
+    </div>
+    <div id="graphwrap">
+      <div id="canvasbox">
+        <div id="cv"></div>
+        <div id="graphload"><div class="spinner"></div><span data-en="Loading graph…">Graph wird geladen…</span></div>
+        <div id="zoomctl">
+          <button onclick="zoomBy(1.3)" aria-label="Hineinzoomen" data-en-title="Zoom in"><svg class="ic" viewBox="0 0 24 24"><use href="#i-zin"/></svg></button>
+          <button onclick="zoomBy(1/1.3)" aria-label="Herauszoomen" data-en-title="Zoom out"><svg class="ic" viewBox="0 0 24 24"><use href="#i-zout"/></svg></button>
+          <button onclick="fitView()" aria-label="Ansicht einpassen" data-en-title="Fit to view"><svg class="ic" viewBox="0 0 24 24"><use href="#i-fit"/></svg></button>
+        </div>
+        <span id="hint" data-en="Drag to pan · Scroll to zoom · Click a node for details">Ziehen zum Verschieben · Scrollen zum Zoomen · Klick auf Knoten für Details</span>
+        <div id="legend" class="hidden">
+          <div id="legendhead" onclick="$('legend').classList.toggle('collapsed')">
+            <svg class="ic" style="width:16px;height:16px;color:var(--acc)" viewBox="0 0 24 24"><use href="#i-graph"/></svg>
+            <span data-en="Clusters">Bereiche</span>
+            <svg class="ic caret" style="width:16px;height:16px" viewBox="0 0 24 24"><use href="#i-back"/></svg>
+          </div>
+          <div id="legendbody"></div>
+        </div>
+      </div>
+      <aside id="side" aria-label="Knoten-Details" data-en-title="Node details">
+        <div class="handle"></div>
+        <button class="btn ghost icon" id="sideclose" onclick="closeSide()" aria-label="Schließen" data-en-title="Close"><svg class="ic" viewBox="0 0 24 24"><use href="#i-x"/></svg></button>
+        <h3 id="ntitle"></h3>
+        <div class="kv" id="nmeta"></div>
+        <div class="file" id="nfile"></div>
+        <button class="btn" onclick="doExplain()"><svg class="ic" viewBox="0 0 24 24"><use href="#i-spark"/></svg><span data-en="Explain this">Erklären lassen</span></button>
+        <div id="pathbox" style="display:none;margin-top:var(--sp-3);padding:10px 12px;border-radius:var(--r-sm);
+             background:rgba(96,165,250,.08);border:1px solid rgba(96,165,250,.28)">
+          <div style="font-size:var(--fs-sm);color:var(--blue);font-weight:600;margin-bottom:4px" data-en="Path to this node">Pfad zu diesem Knoten</div>
+          <div id="pathout" style="font-size:var(--fs-sm);color:var(--mut);line-height:1.6"></div>
+          <button class="btn ghost" style="margin-top:8px;min-height:36px;font-size:var(--fs-sm)" onclick="clearPath()" data-en="Hide path">Pfad ausblenden</button>
+        </div>
+        <div id="nneighwrap" style="margin-top:var(--sp-4);display:none">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:var(--sp-2)">
+            <span style="font-size:var(--fs-md);font-weight:600" data-en="Connected to">Verbunden mit</span>
+            <span id="nneighcount" class="chip"></span>
+            <button class="btn ghost" id="pathbtn" style="margin-left:auto;min-height:34px;font-size:var(--fs-sm);padding:5px 10px"
+                    onclick="startPath()"><svg class="ic" style="width:15px;height:15px" viewBox="0 0 24 24"><use href="#i-graph"/></svg><span data-en="Find path">Pfad finden</span></button>
+          </div>
+          <div id="nneigh" style="display:flex;flex-direction:column;gap:4px;max-height:34vh;overflow-y:auto"></div>
+        </div>
+        <div id="explainwait" style="display:none;align-items:center;gap:12px;margin-top:var(--sp-3)">
+          <div class="brandloader" aria-hidden="true">
+            <svg viewBox="0 0 24 24">
+              <path class="draw" pathLength="360" stroke="url(#g-a)" d="m8.59 13.51 6.83 3.98M15.41 6.51l-6.82 3.98"/>
+              <circle class="orbit" pathLength="360" stroke="url(#g-b)" cx="12" cy="12" r="10.5"/>
+              <circle class="draw" pathLength="360" stroke="url(#g-a)" cx="18" cy="5" r="2.6"/>
+              <circle class="draw" pathLength="360" stroke="url(#g-a)" cx="6" cy="12" r="2.6"/>
+              <circle class="draw" pathLength="360" stroke="url(#g-a)" cx="18" cy="19" r="2.6"/>
+            </svg>
+          </div>
+          <div style="min-width:0">
+            <div style="font-size:.86rem" data-en="Analyzing the graph…">Analysiere den Graphen…</div>
+            <div style="color:var(--mut2);font-size:.76rem" data-en="This can take up to two minutes.">Das kann bis zu zwei Minuten dauern.</div>
+          </div>
+        </div>
+        <div id="explainout" style="display:none"></div>
+      </aside>
+    </div>
+  </section>
+
+  <!-- FRAGEN (Query-Konsole) -->
+  <section class="tab" id="tab-ask" aria-label="Fragen an den Graphen" data-en-title="Ask the graph" style="flex-direction:column">
+    <div id="askbar" style="display:flex;gap:var(--sp-2);align-items:center;padding:var(--sp-2) var(--sp-4);border-bottom:1px solid var(--line);flex:none;background:var(--surface)">
+      <select id="askproj" aria-label="Projekt" data-en-title="Project" style="width:auto;min-width:150px;max-width:46vw;flex:none;background-color:var(--bg)"></select>
+      <span style="color:var(--mut2);font-size:var(--fs-sm)" data-en="Ask in plain language — the answer knows your code">Frag in normaler Sprache — die Antwort kennt deinen Code</span>
+    </div>
+    <div class="pad" id="askscroll" style="flex:1">
+      <div style="max-width:46rem;margin:0 auto" id="askthread">
+        <div class="empty" id="askempty">
+          <svg class="ic" viewBox="0 0 24 24"><use href="#i-spark"/></svg><br>
+          <span style="font-size:var(--fs-lg);color:var(--txt);font-weight:600" data-en="What do you want to know about your project?">Was möchtest du über dein Projekt wissen?</span><br>
+          <span style="display:inline-block;margin-top:6px"><span data-en="Ask a question in plain language — the hub searches the knowledge graph and answers with the ">Stell eine Frage in ganz normaler Sprache — der Hub durchsucht den
+          Wissensgraphen und antwortet mit den </span><b data-en="exact code locations">konkreten Code-Stellen</b><span data-en=" (file and line) where it happens."> (Datei und Zeile),
+          an denen es passiert.</span></span><br>
+          <span style="display:inline-block;margin-top:12px;color:var(--mut2);font-size:var(--fs-sm)" data-en="For example: “Where is the login checked?” · “Which files depend on the database?” · “How is a booking created?”">
+          Zum Beispiel: „Wo wird die Anmeldung geprüft?“ · „Welche Dateien hängen an der Datenbank?“
+          · „Wie wird eine Buchung angelegt?“</span>
+        </div>
+      </div>
+    </div>
+    <form id="askform" onsubmit="sendAsk(event)"
+          style="flex:none;display:flex;gap:var(--sp-2);padding:var(--sp-3) var(--sp-4);border-top:1px solid var(--line);background:var(--surface);padding-bottom:calc(var(--sp-3) + var(--sab))">
+      <input id="askinput" placeholder="Deine Frage…" data-en-ph="Your question…" autocomplete="off" style="flex:1"
+             aria-label="Frage eingeben" data-en-title="Enter question">
+      <button class="btn" id="asksend" style="min-width:52px" aria-label="Absenden" data-en-title="Send">
+        <svg class="ic" viewBox="0 0 24 24"><use href="#i-send"/></svg></button>
+    </form>
+  </section>
+
+  <!-- SECRETS -->
+  <section class="tab" id="tab-secrets" aria-label="Secrets-Vault" data-en-title="Secrets vault"><div class="pad">
+    <div style="max-width:44rem;margin:0 auto">
+      <div class="pagehead"><svg class="ic" width="22" height="22" viewBox="0 0 24 24"><use href="#i-key"/></svg><h2 data-en="Secrets vault">Secrets-Vault</h2></div>
+      <p class="pagesub" data-en="An encrypted vault for your API keys, tokens and passwords. Everything is stored with AES-256 — nothing sits in plaintext on disk. Your AI clients fetch keys from here without you ever typing them into a chat.">Ein verschlüsselter Tresor für deine API-Keys, Tokens und Passwörter. Alles wird mit
+        AES-256 verschlüsselt gespeichert — im Klartext liegt nichts auf der Platte. Deine KI-Clients
+        holen sich Keys von hier, ohne dass du sie je in einen Chat tippen musst.</p>
+      <form class="card" id="addsecret" onsubmit="addSecret(event)">
+        <div class="fields">
+          <div><label for="sname" data-en="Name">Name</label><input id="sname" placeholder="z. B. STRIPE_API_KEY" data-en-ph="e.g. STRIPE_API_KEY" autocomplete="off" autocapitalize="off" spellcheck="false"></div>
+          <div><label for="svalue" data-en="Value">Wert</label>
+            <div class="pwwrap"><input id="svalue" type="password" placeholder="Geheimer Wert" data-en-ph="Secret value" autocomplete="off">
+            <button type="button" aria-label="Wert anzeigen" data-en-title="Show value" onclick="togglePw('svalue',this)"><svg class="ic" viewBox="0 0 24 24"><use href="#i-eye"/></svg></button></div>
+          </div>
+        </div>
+        <button class="btn" id="addbtn"><svg class="ic" viewBox="0 0 24 24"><use href="#i-plus"/></svg><span data-en="Save secret">Secret speichern</span></button>
+      </form>
+      <div id="slist"></div>
+      <p style="color:var(--mut2);font-size:var(--fs-sm);line-height:1.6;margin:var(--sp-4) 0 0">
+        <span data-en="Signed-in devices and connected AI clients now live together in the ">Angemeldete Geräte und verbundene KI-Clients findest du jetzt gebündelt im
+        </span><a href="#connect" onclick="tab('connect');return false" style="color:var(--blue)" data-en="Connect tab">Verbinden-Tab</a><span data-en=".">.</span></p>
+    </div>
+  </div></section>
+
+  <!-- MAPPING -->
+  <section class="tab" id="tab-mapping" aria-label="Nacht-Mapping" data-en-title="Nightly mapping"><div class="pad">
+    <div style="max-width:44rem;margin:0 auto">
+      <div class="pagehead"><svg class="ic" width="22" height="22" viewBox="0 0 24 24"><use href="#i-moon"/></svg><h2 data-en="Nightly mapping">Nacht-Mapping</h2></div>
+      <p class="pagesub" data-en="Every night the hub re-reads your projects and rebuilds fresh knowledge graphs — automatically, while you sleep. That keeps the answers in the “Ask” tab in sync with your code. You choose the time, AI provider and which projects run.">Jede Nacht liest der Hub deine Projekte neu ein und baut daraus aktuelle Wissensgraphen —
+        automatisch, während du schläfst. So sind die Antworten im „Fragen“-Tab immer auf dem
+        neuesten Stand deines Codes. Du bestimmst Uhrzeit, KI-Anbieter und welche Projekte mitlaufen.</p>
+
+      <div class="card" id="keycard" style="margin-bottom:var(--sp-3);display:none">
+        <div id="keymissing" style="display:none">
+          <div style="display:flex;gap:10px;align-items:flex-start">
+            <svg class="ic" style="color:var(--amber);flex:none;margin-top:2px" viewBox="0 0 24 24"><use href="#i-alert"/></svg>
+            <div style="min-width:0;flex:1">
+              <div style="font-weight:600;margin-bottom:2px"><span id="keytitle">API-Key</span><span data-en=" required"> benötigt</span></div>
+              <p style="margin:0 0 var(--sp-3);color:var(--mut);font-size:.85rem;line-height:1.55">
+                <span data-en="Nightly mapping analyzes your documents with ">Das Nacht-Mapping analysiert deine Dokumente mit </span><b id="keybackend">dem gewählten Anbieter</b><span data-en=". Enter an API key once — it is stored encrypted in the secrets vault.">.
+                Trage einmalig einen API-Key ein — er wird verschlüsselt im Secrets-Vault gespeichert.
+                </span>
+                <span id="keyhint"></span>
+                <a id="keylink" href="#" target="_blank" rel="noopener" style="color:var(--blue)" data-en="Create key ↗">Key erstellen ↗</a>
+              </p>
+              <form style="display:flex;gap:var(--sp-2);flex-wrap:wrap" onsubmit="saveApiKey(event)">
+                <div class="pwwrap" style="flex:1;min-width:14rem">
+                  <input type="password" id="apikey" placeholder="API-Key einfügen…" data-en-ph="Paste API key…" autocomplete="off" required>
+                  <button type="button" aria-label="Key anzeigen" data-en-title="Show key" onclick="togglePw('apikey',this)"><svg class="ic" viewBox="0 0 24 24"><use href="#i-eye"/></svg></button>
+                </div>
+                <button class="btn" id="keysave"><svg class="ic" viewBox="0 0 24 24"><use href="#i-key"/></svg><span data-en="Save key">Key speichern</span></button>
+              </form>
+            </div>
+          </div>
+        </div>
+        <div id="keyok" style="display:none;align-items:center;gap:10px">
+          <svg class="ic" style="color:var(--acc);flex:none" viewBox="0 0 24 24"><use href="#i-check"/></svg>
+          <span style="font-size:.88rem;line-height:1.5"><span id="keyokmsg">Key ist hinterlegt</span>
+            <span style="color:var(--mut2)"><span data-en="— manage it in the ">— verwalten im </span><a href="#secrets" onclick="tab('secrets');return false" style="color:var(--blue)" data-en="Secrets tab">Secrets-Tab</a></span></span>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:var(--sp-3)">
+        <div style="display:flex;align-items:center;gap:var(--sp-3)">
+          <label class="switch">
+            <input type="checkbox" id="maptoggle" onchange="toggleMapping(this.checked)">
+            <span class="slider"></span>
+          </label>
+          <div style="flex:1;min-width:0">
+            <div id="mapstate" style="font-weight:600">–</div>
+            <div id="mapnext" style="color:var(--mut);font-size:.82rem"></div>
+          </div>
+          <button class="btn" id="runbtn" onclick="runMapping()"><svg class="ic" viewBox="0 0 24 24"><use href="#i-play"/></svg><span data-en="Run now">Jetzt ausführen</span></button>
+        </div>
+        <div id="maprunning" style="display:none;margin-top:var(--sp-3);align-items:center;gap:12px">
+          <div class="brandloader" aria-hidden="true">
+            <svg viewBox="0 0 24 24" style="width:34px;height:34px">
+              <path class="draw" pathLength="360" stroke="url(#g-a)" d="m8.59 13.51 6.83 3.98M15.41 6.51l-6.82 3.98"/>
+              <circle class="orbit" pathLength="360" stroke="url(#g-b)" cx="12" cy="12" r="10.5"/>
+              <circle class="draw" pathLength="360" stroke="url(#g-a)" cx="18" cy="5" r="2.6"/>
+              <circle class="draw" pathLength="360" stroke="url(#g-a)" cx="6" cy="12" r="2.6"/>
+              <circle class="draw" pathLength="360" stroke="url(#g-a)" cx="18" cy="19" r="2.6"/>
+            </svg>
+          </div>
+          <span style="color:var(--acc);font-size:.88rem" data-en="Mapping is running…">Mapping läuft gerade…</span>
+        </div>
+      </div>
+
+      <form class="card" style="margin-bottom:var(--sp-3)" onsubmit="saveMapping(event)">
+        <div style="display:flex;gap:var(--sp-3);flex-wrap:wrap">
+          <div style="flex:1;min-width:9rem">
+            <label for="maptime" style="font-size:.8rem;color:var(--mut);display:block;margin-bottom:5px">
+              <svg class="ic" style="width:14px;height:14px;vertical-align:-2px" viewBox="0 0 24 24"><use href="#i-clock"/></svg> <span data-en="Start time (daily)">Startzeit (täglich)</span></label>
+            <input type="time" id="maptime" value="03:30" required>
+          </div>
+          <div style="flex:1.2;min-width:13.5rem">
+            <label for="mapbackend" style="font-size:.8rem;color:var(--mut);display:block;margin-bottom:5px" data-en="AI provider">KI-Anbieter</label>
+            <select id="mapbackend" onchange="backendChanged()" style="text-overflow:ellipsis"></select>
+          </div>
+          <div style="flex:2;min-width:16rem">
+            <label for="mapmodel" style="font-size:.8rem;color:var(--mut);display:block;margin-bottom:5px" data-en="Model">Modell</label>
+            <select id="mapmodel" onchange="modelChanged()" style="text-overflow:ellipsis"></select>
+            <input id="mapmodelcustom" placeholder="eigenes Modell, z. B. gpt-5" data-en-ph="custom model, e.g. gpt-5" style="margin-top:var(--sp-2);display:none"
+                   autocomplete="off" autocapitalize="off" spellcheck="false">
+          </div>
+        </div>
+        <p id="backendnote" style="color:var(--mut2);font-size:.78rem;margin:var(--sp-3) 0 0;line-height:1.5"></p>
+        <button class="btn" style="margin-top:var(--sp-3)" id="mapsave" data-en="Save">Speichern</button>
+      </form>
+
+      <div class="card" style="margin-bottom:var(--sp-3)">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:var(--sp-3);color:var(--mut);font-size:.85rem">
+          <svg class="ic" viewBox="0 0 24 24"><use href="#i-graph"/></svg><span data-en="Projects">Projekte</span>
+          <button class="btn ghost" style="margin-left:auto;min-height:38px;font-size:.82rem;padding:6px 12px" onclick="openPicker()">
+            <svg class="ic" style="width:16px;height:16px" viewBox="0 0 24 24"><use href="#i-plus"/></svg><span data-en="Add">Hinzufügen</span></button>
+        </div>
+        <div id="projlist" style="display:flex;flex-direction:column;gap:var(--sp-2)"></div>
+      </div>
+
+      <div class="card" style="margin-bottom:var(--sp-3)">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:var(--sp-3);color:var(--mut);font-size:.85rem">
+          <svg class="ic" viewBox="0 0 24 24"><use href="#i-coins"/></svg><span data-en="Costs">Kosten</span></div>
+        <div id="mapcosts" class="statgrid">–</div>
+        <p style="color:var(--mut2);font-size:.76rem;line-height:1.55;margin:var(--sp-3) 0 0" data-en="Estimated from the run logs (tokens used × model price) — your actual bill is usually lower, because repeated content is billed at a discount. Every run counts, including manual ones.">
+          Geschätzt aus den Lauf-Logs (verbrauchte Tokens × Modellpreis) — die echte Rechnung beim
+          Anbieter liegt meist darunter, weil wiederholte Inhalte günstiger abgerechnet werden.
+          Gezählt werden alle Läufe, auch manuell gestartete.</p>
+      </div>
+
+      <div class="card" style="margin-bottom:var(--sp-3)">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:var(--sp-3);color:var(--mut);font-size:.85rem">
+          <svg class="ic" viewBox="0 0 24 24"><use href="#i-pulse"/></svg><span data-en="History">Verlauf</span>
+          <button class="btn ghost icon" style="margin-left:auto;min-height:36px;min-width:36px;padding:6px" onclick="loadHistory()" aria-label="Neu laden" data-en-title="Reload"><svg class="ic" viewBox="0 0 24 24"><use href="#i-refresh"/></svg></button>
+        </div>
+        <div id="sparkwrap"></div>
+        <div id="histtable"></div>
+        <details style="margin-top:var(--sp-4);border-top:1px solid var(--line);padding-top:var(--sp-3)">
+          <summary style="cursor:pointer;font-size:var(--fs-sm);color:var(--mut2)" data-en="Raw log of the last run">Rohes Log des letzten Laufs</summary>
+          <pre id="maplog" style="margin:var(--sp-2) 0 0;font-size:.74rem;line-height:1.55;color:var(--mut);white-space:pre-wrap;word-break:break-all;max-height:40vh;overflow-y:auto">–</pre>
+        </details>
+      </div>
+    </div>
+  </div></section>
+
+  <!-- VERBINDEN -->
+  <section class="tab" id="tab-connect" aria-label="Verbinden" data-en-title="Connect"><div class="pad">
+    <div style="max-width:44rem;margin:0 auto">
+      <div class="pagehead"><svg class="ic" width="22" height="22" viewBox="0 0 24 24"><use href="#i-link"/></svg><h2 data-en="Connect">Verbinden</h2></div>
+      <p class="pagesub" data-en="Connect your hub with Claude and other AI clients. A connected client can query your knowledge graphs and — with your permission — use secrets from the vault. Pick your program below; the instructions come pre-filled and ready to copy.">Verbinde deinen Hub mit Claude und anderen KI-Clients. Ein verbundener Client kann
+        deine Wissensgraphen abfragen und — mit deiner Erlaubnis — Secrets aus dem Vault nutzen. Wähle unten
+        dein Programm; die Anleitung ist fertig ausgefüllt zum Kopieren.</p>
+
+      <div class="card" style="margin-bottom:var(--sp-3)">
+        <label style="font-size:.8rem;color:var(--mut);display:block;margin-bottom:6px" data-en="Your MCP address">Deine MCP-Adresse</label>
+        <div class="copyrow"><span class="mono" id="mcpurl" style="flex:1;min-width:0;overflow-wrap:anywhere"></span>
+          <button class="btn ghost icon" onclick="copyText($('mcpurl').textContent,'Adresse kopiert')" aria-label="Adresse kopieren" data-en-title="Copy address"><svg class="ic" viewBox="0 0 24 24"><use href="#i-copy"/></svg></button></div>
+        <div style="display:flex;gap:var(--sp-2);flex-wrap:wrap;margin-top:var(--sp-3)">
+          <button class="btn ghost" style="min-height:40px;font-size:var(--fs-sm)" onclick="toggleQr()"><svg class="ic" viewBox="0 0 24 24"><use href="#i-qr"/></svg><span data-en="QR for phone">QR fürs Handy</span></button>
+          <button class="btn ghost" style="min-height:40px;font-size:var(--fs-sm)" id="testbtn" onclick="testConnect()"><svg class="ic" viewBox="0 0 24 24"><use href="#i-pulse"/></svg><span data-en="Test connection">Verbindung testen</span></button>
+          <span id="testresult" style="display:none;align-items:center;gap:6px;font-size:var(--fs-sm)"></span>
+        </div>
+        <div id="qrbox" style="display:none;margin-top:var(--sp-3);text-align:center">
+          <div style="background:#fff;border-radius:var(--r-sm);padding:14px;display:inline-block" id="qrimg"></div>
+          <p style="color:var(--mut2);font-size:var(--fs-xs);margin:8px 0 0" data-en="Scan with your phone camera to open the address.">Mit der Handy-Kamera scannen, um die Adresse zu öffnen.</p>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:var(--sp-3)">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+          <svg class="ic" style="color:var(--acc)" viewBox="0 0 24 24"><use href="#i-key"/></svg>
+          <span style="font-weight:600" data-en="Device token">Geräte-Token</span>
+        </div>
+        <p style="color:var(--mut);font-size:var(--fs-sm);line-height:1.6;margin:0 0 var(--sp-3)">
+          <span data-en="claude.ai in the browser needs ">claude.ai im Browser braucht </span><b data-en="no">kein</b><span data-en=" token — you sign in there with your password. For terminal and desktop programs, generate a separate token per device here. It stays valid for one year and can be signed out any time under “Connected clients”."> Token — dort meldest du dich mit deinem Zugangspasswort an.
+          Für Terminal- und Desktop-Programme erzeugst du hier ein eigenes Token pro Gerät. Es ist ein Jahr
+          gültig und lässt sich jederzeit unter „Verbundene Clients" wieder abmelden.</span></p>
+        <form style="display:flex;gap:var(--sp-2);flex-wrap:wrap" onsubmit="genToken(event)">
+          <input id="tokenlabel" placeholder="Name des Geräts, z. B. „Laptop“ oder „Claude Code“" data-en-ph="Device name, e.g. “Laptop” or “Claude Code”"
+                 style="flex:1;min-width:14rem" autocomplete="off" maxlength="60">
+          <button class="btn" id="genbtn"><svg class="ic" viewBox="0 0 24 24"><use href="#i-plus"/></svg><span data-en="Generate token">Token erzeugen</span></button>
+        </form>
+        <div id="tokenout" style="display:none;margin-top:var(--sp-3)">
+          <div class="warn" style="margin-bottom:8px"><svg class="ic" viewBox="0 0 24 24"><use href="#i-alert"/></svg>
+            <div><span data-en="This token is shown ">Dieses Token wird </span><b data-en="only once">nur jetzt</b><span data-en=" — copy it now and paste it into your setup instructions below."> angezeigt. Kopiere es und füge es unten in deine Anleitung ein.</span></div></div>
+          <div class="copyrow"><span class="mono" id="tokenval" style="flex:1;min-width:0;overflow-wrap:anywhere;color:var(--acc)"></span>
+            <button class="btn ghost icon" onclick="copyText($('tokenval').textContent,'Token kopiert')" aria-label="Token kopieren" data-en-title="Copy token"><svg class="ic" viewBox="0 0 24 24"><use href="#i-copy"/></svg></button></div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-bottom:var(--sp-3)">
+        <div class="seg" role="tablist" aria-label="Client wählen" data-en-title="Choose client">
+          <button class="segbtn on" data-c="webai" onclick="pickClient('webai')" role="tab">claude.ai</button>
+          <button class="segbtn" data-c="code" onclick="pickClient('code')" role="tab">Claude Code</button>
+          <button class="segbtn" data-c="desktop" onclick="pickClient('desktop')" role="tab">Claude Desktop</button>
+          <button class="segbtn" data-c="rest" onclick="pickClient('rest')" role="tab" data-en="Other / REST">Andere / REST</button>
+        </div>
+        <div id="clientbody" style="margin-top:var(--sp-4)"></div>
+      </div>
+
+      <div class="pagehead" style="margin-top:var(--sp-8)">
+        <svg class="ic" width="22" height="22" viewBox="0 0 24 24"><use href="#i-devices"/></svg>
+        <h2 data-en="Connected clients">Verbundene Clients</h2>
+        <button class="btn ghost" id="connrevokeall" style="margin-left:auto;min-height:38px;font-size:.82rem;display:none"
+                onclick="revokeAllSessions()" data-en="Sign out all other devices">Alle anderen abmelden</button>
+        <button class="btn ghost icon" onclick="loadConnSessions()" aria-label="Neu laden" data-en-title="Reload"><svg class="ic" viewBox="0 0 24 24"><use href="#i-refresh"/></svg></button>
+      </div>
+      <p style="color:var(--mut);font-size:var(--fs-sm);line-height:1.6;margin:0 0 var(--sp-3)" data-en="Every client that may currently access your hub, with its last activity. If something looks unfamiliar, sign it out right away.">
+        Jeder Zugang, der gerade auf deinen Hub zugreifen darf — mit letztem Zugriff. Kommt dir etwas
+        unbekannt vor, melde es sofort ab.</p>
+      <div id="connsess" style="display:flex;flex-direction:column;gap:var(--sp-2)"></div>
+    </div>
+  </div></section>
+
+  <!-- DIAGNOSE -->
+  <section class="tab" id="tab-health" aria-label="Diagnose" data-en-title="Diagnostics"><div class="pad">
+    <div style="max-width:44rem;margin:0 auto">
+      <div class="pagehead"><svg class="ic" width="22" height="22" viewBox="0 0 24 24"><use href="#i-pulse"/></svg><h2 data-en="Diagnostics">Diagnose</h2>
+        <button class="btn ghost icon" onclick="loadHealth()" aria-label="Neu prüfen" data-en-title="Re-check"><svg class="ic" viewBox="0 0 24 24"><use href="#i-refresh"/></svg></button>
+      </div>
+      <p style="color:var(--mut);font-size:.86rem;line-height:1.6;margin:0 0 var(--sp-4)" data-en="An overview of your hub's health. If everything is green, the system is fully operational — for yellow or red, the fix is listed right next to it.">
+        Überblick über den Zustand deines Hubs. Steht hier alles auf Grün, funktioniert das System
+        vollständig — bei Gelb oder Rot steht daneben, was zu tun ist.</p>
+
+      <div id="healthsummary" style="margin-bottom:var(--sp-4)"></div>
+      <div id="healthchecks" style="display:flex;flex-direction:column;gap:var(--sp-2)"></div>
+
+      <div class="card" style="margin-top:var(--sp-4)">
+        <div style="color:var(--mut);font-size:.85rem;margin-bottom:var(--sp-3)" data-en="Your hub at a glance">Dein Hub im Überblick</div>
+        <div id="healthinfo" class="statgrid"></div>
+      </div>
+
+      <div class="card" style="margin-top:var(--sp-3)">
+        <div style="display:flex;align-items:center;gap:8px;color:var(--mut);font-size:.85rem;margin-bottom:var(--sp-3)">
+          <svg class="ic" viewBox="0 0 24 24"><use href="#i-shieldcheck"/></svg><span data-en="Two-factor authentication">Zwei-Faktor-Authentifizierung</span></div>
+        <div id="twofabody"></div>
+      </div>
+
+      <div class="card" style="margin-top:var(--sp-3)">
+        <div style="display:flex;align-items:center;gap:8px;color:var(--mut);font-size:.85rem;margin-bottom:var(--sp-3)">
+          <svg class="ic" viewBox="0 0 24 24"><use href="#i-lock"/></svg><span data-en="Vault security">Vault-Sicherheit</span></div>
+        <div id="vaultbody"></div>
+      </div>
+
+      <div class="card" id="backupcard" style="margin-top:var(--sp-3)">
+        <div style="display:flex;align-items:center;gap:8px;color:var(--mut);font-size:.85rem;margin-bottom:var(--sp-3)">
+          <svg class="ic" viewBox="0 0 24 24"><use href="#i-shield"/></svg><span data-en="Backup">Sicherung</span>
+          <button class="btn ghost" id="backupbtn" style="margin-left:auto;min-height:36px;font-size:.8rem;padding:6px 12px"
+                  onclick="runBackup()" data-en="Back up now">Jetzt sichern</button>
+        </div>
+        <div id="backupbody"></div>
+        <details style="margin-top:var(--sp-3);font-size:.8rem;color:var(--mut2)">
+          <summary style="cursor:pointer" data-en="How do I restore in an emergency?">Wie stelle ich im Ernstfall wieder her?</summary>
+          <pre style="white-space:pre-wrap;margin:8px 0 0;line-height:1.6;font-size:.76rem" data-en="1. Set up a new server and install the hub (./install.sh)&#10;2. Fetch your backup (from the Git repo or the backup folder)&#10;3. python backup.py restore hub-YYYY-MM-DD_HHMM.khub --to ./restored&#10;   (asks for the backup passphrase)&#10;4. Copy the files back — the exact command is shown to you&#10;5. Restart the service. Password, secrets and settings are all back.">1. Neuen Server aufsetzen und den Hub installieren (./install.sh)
+2. Sicherung besorgen (aus dem Git-Repo oder vom Backup-Ordner)
+3. python backup.py restore hub-JJJJ-MM-TT_HHMM.khub --to ./wiederhergestellt
+   (fragt nach der Backup-Passphrase)
+4. Dateien zurückkopieren — der Befehl wird dir dabei angezeigt
+5. Dienst neu starten. Passwort, Secrets und Einstellungen sind wieder da.</pre>
+        </details>
+      </div>
+
+      <div class="card" id="healtherrbox" style="margin-top:var(--sp-3);display:none">
+        <div style="display:flex;align-items:center;gap:8px;color:var(--red);font-size:.85rem;margin-bottom:var(--sp-3)">
+          <svg class="ic" viewBox="0 0 24 24"><use href="#i-alert"/></svg><span data-en="Recent errors from mapping runs">Letzte Fehler aus den Mapping-Läufen</span></div>
+        <pre id="healtherrs" style="margin:0;font-size:.76rem;line-height:1.6;color:var(--mut);white-space:pre-wrap;overflow-wrap:anywhere"></pre>
+      </div>
+    </div>
+  </div></section>
+
+  <!-- AUDIT -->
+  <section class="tab" id="tab-audit" aria-label="Audit-Log" data-en-title="Audit log"><div class="pad">
+    <div style="max-width:44rem;margin:0 auto">
+      <div class="pagehead"><svg class="ic" width="22" height="22" viewBox="0 0 24 24"><use href="#i-scroll"/></svg><h2 data-en="Audit log">Audit-Log</h2>
+        <button class="btn ghost icon" onclick="loadAudit()" aria-label="Neu laden" data-en-title="Reload"><svg class="ic" viewBox="0 0 24 24"><use href="#i-refresh"/></svg></button>
+      </div>
+      <p class="pagesub" data-en="A complete log of every access to the vault: who read, set or deleted which secret, and via which client — so you can see at a glance whether anyone is tampering with your secrets.">Ein lückenloses Protokoll jedes Zugriffs auf den Vault: Wer hat wann welches Secret
+        gelesen, gesetzt oder gelöscht — und über welchen Client. So siehst du auf einen Blick, ob sich
+        jemand an deinen Geheimnissen zu schaffen macht.</p>
+      <div id="auditlist"></div>
+    </div>
+  </div></section>
+
+  <!-- REPORT -->
+  <section class="tab" id="tab-report" aria-label="Graph-Report" data-en-title="Graph report"><div class="pad">
+    <div style="max-width:52rem;margin:0 auto">
+      <button class="btn ghost" onclick="tab('graph')"><svg class="ic" viewBox="0 0 24 24"><use href="#i-back"/></svg><span data-en="Back to graph">Zurück zum Graph</span></button>
+      <div id="reportout"></div>
+    </div>
+  </div></section>
+</main>
+
+<nav id="bottomnav" aria-label="Hauptnavigation" data-en-title="Main navigation">
+  <button data-tab="graph" class="on" onclick="tab('graph')"><svg class="ic" viewBox="0 0 24 24"><use href="#i-graph"/></svg><span data-en="Graphs">Graphen</span></button>
+  <button data-tab="ask" onclick="tab('ask')"><svg class="ic" viewBox="0 0 24 24"><use href="#i-spark"/></svg><span data-en="Ask">Fragen</span></button>
+  <button data-tab="secrets" onclick="tab('secrets')"><svg class="ic" viewBox="0 0 24 24"><use href="#i-key"/></svg><span data-en="Secrets">Secrets</span></button>
+  <button data-tab="mapping" onclick="tab('mapping')"><svg class="ic" viewBox="0 0 24 24"><use href="#i-moon"/></svg><span data-en="Mapping">Mapping</span></button>
+  <button id="morebtn" onclick="openMore()"><svg class="ic" viewBox="0 0 24 24"><use href="#i-more"/></svg><span data-en="More">Mehr</span></button>
+</nav>
+
+<div id="searchdrop" role="listbox" aria-label="Suchergebnisse" data-en-title="Search results"></div>
+<div id="toasts" aria-live="polite"></div>
+
+<div id="errbanner" role="alert" aria-live="assertive">
+  <svg class="ic" viewBox="0 0 24 24"><use href="#i-alert"/></svg>
+  <span class="errtext"></span>
+  <button onclick="hideError()" aria-label="Meldung schließen" data-en-title="Dismiss message"><svg class="ic" viewBox="0 0 24 24"><use href="#i-x"/></svg></button>
+</div>
+
+<dialog id="moredlg" style="width:min(94vw,20rem)">
+  <h3 style="margin:0 0 var(--sp-3)" data-en="More">Mehr</h3>
+  <div style="display:flex;flex-direction:column;gap:6px">
+    <button class="btn ghost monly" style="justify-content:flex-start;min-height:48px" onclick="moredlg.close();tab('connect')">
+      <svg class="ic" viewBox="0 0 24 24"><use href="#i-link"/></svg><span data-en="Connect">Verbinden</span></button>
+    <button class="btn ghost" style="justify-content:flex-start;min-height:48px" onclick="moredlg.close();tab('health')">
+      <svg class="ic" viewBox="0 0 24 24"><use href="#i-pulse"/></svg><span data-en="Diagnostics">Diagnose</span></button>
+    <button class="btn ghost" style="justify-content:flex-start;min-height:48px" onclick="moredlg.close();tab('audit')">
+      <svg class="ic" viewBox="0 0 24 24"><use href="#i-scroll"/></svg><span data-en="Audit log">Audit-Log</span></button>
+    <div class="monly" style="height:1px;background:var(--line);margin:6px 0"></div>
+    <button class="btn ghost monly" style="justify-content:flex-start;min-height:48px" onclick="toggleTheme()">
+      <svg class="ic" viewBox="0 0 24 24"><use href="#i-moon"/></svg><span id="morethemelbl" data-en="Light / dark">Hell / Dunkel</span></button>
+    <button class="btn ghost monly" style="justify-content:flex-start;min-height:48px" onclick="toggleLang()">
+      <svg class="ic" viewBox="0 0 24 24"><use href="#i-globe"/></svg><span id="morelanglbl">Sprache: Deutsch</span></button>
+    <button class="btn ghost monly" style="justify-content:flex-start;min-height:48px" onclick="moredlg.close();startTour()">
+      <svg class="ic" viewBox="0 0 24 24"><use href="#i-help"/></svg><span data-en="Help &amp; tour">Hilfe &amp; Tour</span></button>
+  </div>
+  <div class="row" style="margin-top:var(--sp-3)">
+    <button class="btn ghost" onclick="moredlg.close()"><span data-en="Close">Schließen</span></button>
+  </div>
+</dialog>
+
+<dialog id="pickerdlg">
+  <h3 data-en="Choose project directory">Projekt-Verzeichnis wählen</h3>
+  <div id="pickpath" class="mono" style="font-size:.78rem;color:var(--mut);word-break:break-all;margin-bottom:10px"></div>
+  <div id="pickdirs" style="max-height:46dvh;overflow-y:auto;display:flex;flex-direction:column;gap:4px;margin-bottom:var(--sp-4)"></div>
+  <div class="row">
+    <button class="btn ghost" onclick="pickerdlg.close()" data-en="Cancel">Abbrechen</button>
+    <button class="btn" id="pickok" onclick="pickCurrent()"><svg class="ic" viewBox="0 0 24 24"><use href="#i-check"/></svg><span data-en="Use this directory">Dieses Verzeichnis</span></button>
+  </div>
+</dialog>
+
+<dialog id="ignoredlg" style="width:min(94vw,34rem)">
+  <h3 data-en="Exclude rules (.graphifyignore)">Ausschluss-Regeln (.graphifyignore)</h3>
+  <p style="margin-top:0"><span data-en="Files and folders that mapping skips — one rule per line (gitignore syntax). Sensitive things like ">Dateien und Ordner, die beim Mapping ignoriert werden — eine Regel pro Zeile
+  (gitignore-Syntax). Sensibles wie </span><span class="mono">.env</span>, <span class="mono">data/</span><span data-en=" or "> oder
+  </span><span class="mono">*.key</span><span data-en=" always belong here."> gehört immer hierher.</span></p>
+  <textarea id="ignoretext" spellcheck="false" style="width:100%;min-height:11rem;background:var(--bg);border:1px solid var(--line2);color:var(--txt);border-radius:var(--r-sm);padding:10px;font-family:ui-monospace,Menlo,monospace;font-size:.82rem;resize:vertical"></textarea>
+  <div class="row" style="margin-top:var(--sp-4)">
+    <button class="btn ghost" onclick="ignoredlg.close()" data-en="Cancel">Abbrechen</button>
+    <button class="btn" id="ignoresave" onclick="saveIgnore()" data-en="Save">Speichern</button>
+  </div>
+</dialog>
+
+<dialog id="confirmdlg">
+  <h3 id="cdtitle" data-en="Confirm deletion">Löschen bestätigen</h3>
+  <p id="cdtext"></p>
+  <div class="row">
+    <button class="btn ghost" onclick="confirmdlg.close('no')" data-en="Cancel">Abbrechen</button>
+    <button class="btn danger" onclick="confirmdlg.close('yes')"><svg class="ic" viewBox="0 0 24 24"><use href="#i-trash"/></svg><span data-en="Delete">Löschen</span></button>
+  </div>
+</dialog>
+
+<dialog id="tourdlg" aria-label="Einführung" data-en-title="Intro tour">
+  <div id="tourbody"></div>
+  <div class="tourdots" id="tourdots"></div>
+  <div class="row" style="justify-content:space-between;margin-top:var(--sp-6)">
+    <button class="btn ghost" id="tourskip" onclick="endTour()" style="font-size:var(--fs-sm)">Überspringen</button>
+    <div style="display:flex;gap:8px">
+      <button class="btn ghost" id="tourprev" onclick="tourStep(-1)"><svg class="ic" viewBox="0 0 24 24"><use href="#i-back"/></svg></button>
+      <button class="btn" id="tournext" onclick="tourStep(1)">Weiter</button>
+    </div>
+  </div>
+</dialog>
+
+<script src="/ui/static/force-graph.min.js"></script>
+<script src="/ui/asset/app.js?v=__V__"></script>
+</body></html>

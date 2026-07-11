@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Abhängigkeiten installieren
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Lint (ruff)
+        run: ruff check .
+
+      - name: Browser für die E2E-Tests
+        run: playwright install --with-deps chromium
+
+      - name: Tests (Unit + HTTP + E2E)
+        run: pytest -q
+
+      # Die Oberfläche liegt als echte Dateien in web/ und wird über eine
+      # inhaltsgehashte URL ausgeliefert. Ein Build-Schritt ist nicht nötig —
+      # aber die Dateien MÜSSEN da sein, sonst startet der Hub nicht.
+      - name: Auslieferbarkeit prüfen
+        run: |
+          test -s web/index.html
+          test -s web/app.css
+          test -s web/app.js
+          python -c "import ui; assert ui.ASSET_V, 'keine Asset-Version'; print('Asset-Version:', ui.ASSET_V)"
+
+  secrets-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Keine Secrets im Repo
+        run: |
+          # Diese Dateien dürfen NIE eingecheckt sein — sie enthalten Schlüssel.
+          for f in vault.enc audit.log oauth_state.json .env; do
+            if git ls-files --error-unmatch "$f" >/dev/null 2>&1; then
+              echo "::error::$f ist eingecheckt — das darf nicht sein"
+              exit 1
+            fi
+          done
+          echo "OK: keine Schlüsseldateien im Repo"

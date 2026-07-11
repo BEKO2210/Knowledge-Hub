@@ -1,0 +1,34 @@
+# Knowledge Hub — Docker-Variante
+#
+#   docker compose up -d          # startet den Hub
+#   → http://localhost:8300/ui    # Einrichtungs-Assistent im Browser
+#
+# Alles Dauerhafte (Konfiguration, Vault, Wissensgraphen) liegt im Volume `hub-data`.
+# Deine Projekte werden schreibgeschützt eingehängt — der Hub liest sie nur.
+
+services:
+  knowledge-hub:
+    build: .
+    image: knowledge-hub:latest
+    container_name: knowledge-hub
+    restart: unless-stopped
+
+    # In den Container muss der Server auf allen Adressen lauschen; nach außen
+    # veröffentlichen wir ihn trotzdem nur auf localhost (davor gehört ein Proxy).
+    environment:
+      - KNOWLEDGE_HOST=0.0.0.0
+    ports:
+      - "127.0.0.1:8300:8300"
+
+    volumes:
+      - hub-data:/data
+      # Mount your own projects here (read-only). Example:
+      # - /srv/projects/payments-api:/projects/payments-api:ro
+      # - /srv/projects/web-storefront:/projects/web-storefront:ro
+      - ./projects:/projects:ro
+
+    # Der Nacht-Job läuft im Container-Cron; alternativ vom Host aus:
+    #   docker compose exec knowledge-hub ./nightly-map.sh
+
+volumes:
+  hub-data:

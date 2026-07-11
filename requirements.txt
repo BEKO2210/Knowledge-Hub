@@ -1,0 +1,9 @@
+# Knowledge Hub — Laufzeit-Abhängigkeiten
+# Versionen entsprechen der getesteten Installation (Python 3.12).
+fastmcp==3.4.4
+starlette==1.3.1
+uvicorn==0.51.0
+cryptography==49.0.0
+PyYAML==6.0.3
+anthropic>=0.116.0
+segno>=1.6.0

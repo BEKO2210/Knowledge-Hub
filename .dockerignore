@@ -1,0 +1,24 @@
+# NIEMALS ins Image: Secrets, Zustand und lokale Daten.
+# (Ohne diese Datei landen Vault und OAuth-Tokens im Container-Image!)
+vault.enc
+vault.enc.tmp
+oauth_state.json
+audit.log
+env
+.env
+*.key
+*.pem
+
+# Laufzeit-Daten (gehören ins Volume, nicht ins Image)
+build-logs/
+graphify-out/
+data/
+projects/
+
+# Lokale Entwicklungs-Artefakte
+.venv/
+__pycache__/
+*.pyc
+.git/
+.gitignore
+ratelimit.json

@@ -1,0 +1,109 @@
+# Knowledge Hub — Beispiel-Konfiguration
+# Wird von install.sh nach ~/.config/knowledge-mcp/config.yaml kopiert.
+#
+# Secrets gehören NICHT hierher:
+#   * Zugangspasswort, Vault-Schlüssel, MCP-Token -> ~/.config/knowledge-mcp/env (erzeugt der Wizard)
+#   * API-Keys der KI-Anbieter                    -> Secrets-Vault (Eingabe in der Web-UI)
+#
+# Projekte trägst du in der Web-UI ein (Mapping-Tab) — sie landen dann unter mapping.projects.
+
+server:
+  host: 127.0.0.1
+  port: 8300
+  public_url: http://127.0.0.1:8300
+branding:
+  name: Knowledge Hub
+paths:
+  knowledge_root: ~/graphify-knowledge
+  graphify_bin: ~/.local/bin/graphify
+  graphify_sync: ~/.local/bin/graphify-sync
+mapping:
+  backend: openai
+  model: gpt-4.1-mini
+  api_timeout: 300
+  backends:
+    openai:
+      label: OpenAI
+      secret: open_ai
+      env: OPENAI_API_KEY
+      key_url: https://platform.openai.com/api-keys
+      key_hint: Key beginnt mit sk-…
+      models:
+      - id: gpt-4.1-nano
+        hint: am günstigsten · $0.10/$0.40
+      - id: gpt-4.1-mini
+        hint: empfohlen · $0.40/$1.60
+      - id: gpt-4.1
+        hint: stark · $2.00/$8.00
+      - id: gpt-5-mini
+        hint: günstig & modern · $0.25/$2.00
+      - id: gpt-5
+        hint: am stärksten · $1.25/$10.00
+      api: openai
+      base_url: https://api.openai.com/v1
+    gemini:
+      label: Google Gemini
+      secret: gemini_api_key
+      env: GEMINI_API_KEY
+      key_url: https://aistudio.google.com/apikey
+      key_hint: Key aus Google AI Studio
+      models:
+      - id: gemini-3-flash-preview
+        hint: graphify-Standard · $0.50/$3.00
+      - id: gemini-2.5-flash
+        hint: günstig & schnell
+      - id: gemini-2.5-pro
+        hint: stärkstes Gemini
+      api: openai
+      base_url: https://generativelanguage.googleapis.com/v1beta/openai/
+    claude:
+      label: Anthropic Claude
+      secret: anthropic_api_key
+      env: ANTHROPIC_API_KEY
+      key_url: https://console.anthropic.com/settings/keys
+      key_hint: Key beginnt mit sk-ant-…
+      models:
+      - id: claude-haiku-4-5
+        hint: schnell & günstig · $1.00/$5.00
+      - id: claude-sonnet-5
+        hint: empfohlen · $3.00/$15.00
+      - id: claude-opus-4-8
+        hint: am stärksten · $5.00/$25.00
+      api: anthropic
+    deepseek:
+      label: DeepSeek
+      secret: deepseek_api_key
+      env: DEEPSEEK_API_KEY
+      key_url: https://platform.deepseek.com/api_keys
+      key_hint: Key beginnt mit sk-…
+      models:
+      - id: deepseek-v4-flash
+        hint: sehr günstig · $0.14/$0.28
+      api: openai
+      base_url: https://api.deepseek.com
+    kimi:
+      label: Moonshot Kimi
+      secret: moonshot_api_key
+      env: MOONSHOT_API_KEY
+      key_url: https://platform.moonshot.ai/console/api-keys
+      key_hint: Key aus der Moonshot-Konsole
+      models:
+      - id: kimi-k2.6
+        hint: günstig · $0.74/$4.66
+      api: openai
+      base_url: https://api.moonshot.ai/v1
+    ollama:
+      label: Ollama (lokal)
+      secret: null
+      env: OLLAMA_API_KEY
+      key_url: https://ollama.com/download
+      key_hint: Braucht keinen Key — Ollama muss auf dem Server laufen (Port 11434).
+      local: true
+      models:
+      - id: qwen2.5-coder:7b
+        hint: kostenlos, aber langsam auf dieser Hardware
+      - id: qwen3:4b-instruct-2507-q4_K_M
+        hint: kostenlos, klein — Qualität begrenzt
+      api: openai
+      base_url: http://127.0.0.1:11434/v1
+  projects: []

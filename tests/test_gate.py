@@ -1,0 +1,100 @@
+"""BearerGate: Was ist offen, was ist zu — und bleibt der Login gegen Rateversuche dicht?"""
+
+from __future__ import annotations
+
+from conftest import TEST_MCP_TOKEN, TEST_PASSWORD
+
+import vault
+
+
+# --- offen ohne Anmeldung ------------------------------------------------------
+def test_seite_und_assets_sind_offen(client):
+    """Ohne diese drei kann sich niemand überhaupt anmelden."""
+    assert client.get("/ui").status_code == 200
+    assert client.get("/ui/asset/app.css").status_code == 200
+    assert client.get("/ui/asset/app.js").status_code == 200
+
+
+def test_oauth_discovery_ist_offen(client):
+    """Muss offen sein — so findet ein KI-Client den Anmeldeweg überhaupt erst."""
+    assert client.get("/.well-known/oauth-protected-resource").status_code == 200
+    assert client.get("/.well-known/oauth-authorization-server").status_code == 200
+
+
+# --- zu ohne Anmeldung ---------------------------------------------------------
+def test_daten_endpunkte_sind_ohne_token_dicht(client):
+    for pfad in ("/ui/api/secrets", "/ui/api/audit", "/ui/api/health",
+                 "/ui/api/sessions", "/ui/api/mapping/status", "/ui/api/projects"):
+        assert client.get(pfad).status_code == 401, f"{pfad} war offen!"
+
+
+def test_mcp_endpunkt_ist_ohne_token_dicht(client):
+    r = client.post("/mcp", json={"jsonrpc": "2.0", "method": "initialize", "id": 1})
+    assert r.status_code == 401
+    # RFC 9728: Die 401 weist den Weg zum Anmeldeverfahren
+    assert "resource_metadata" in r.headers.get("www-authenticate", "")
+
+
+def test_falscher_token_wird_abgewiesen(client):
+    r = client.get("/ui/api/secrets", headers={"Authorization": "Bearer voellig-falsch"})
+    assert r.status_code == 401
+
+
+def test_asset_pfad_erlaubt_keinen_ausbruch(client):
+    """Kein Weg aus web/ heraus — und keine fremden Dateitypen."""
+    assert client.get("/ui/asset/app.txt").status_code == 404
+    assert client.get("/ui/asset/index.html").status_code == 404
+
+
+# --- offen MIT Token -----------------------------------------------------------
+def test_statischer_token_oeffnet_die_daten_endpunkte(client, auth, fresh_vault):
+    assert client.get("/ui/api/health", headers=auth).status_code == 200
+    assert client.get("/ui/api/secrets", headers=auth).status_code == 200
+
+
+# --- Login + Rate-Limit --------------------------------------------------------
+def test_login_mit_richtigem_passwort(client, fresh_vault):
+    r = client.post("/ui/api/login", json={"password": TEST_PASSWORD})
+    assert r.status_code == 200
+    assert r.json().get("token", "").startswith("kmcp_")
+
+
+def test_login_mit_falschem_passwort(client, fresh_vault):
+    r = client.post("/ui/api/login", json={"password": "falsch"})
+    assert r.status_code == 401
+
+
+def test_login_sperrt_nach_fuenf_fehlversuchen(client, fresh_vault):
+    """5 Fehlversuche / 15 min — danach ist zu, auch für das RICHTIGE Passwort."""
+    for _ in range(5):
+        client.post("/ui/api/login", json={"password": "falsch"})
+    r = client.post("/ui/api/login", json={"password": TEST_PASSWORD})
+    assert r.status_code == 429, "Nach 5 Fehlversuchen muss gesperrt sein"
+
+
+def test_login_token_funktioniert_danach(client, fresh_vault):
+    token = client.post("/ui/api/login", json={"password": TEST_PASSWORD}).json()["token"]
+    h = {"Authorization": f"Bearer {token}"}
+    assert client.get("/ui/api/secrets", headers=h).status_code == 200
+
+
+def test_secret_ueber_http_landet_verschluesselt_im_vault(client, auth, fresh_vault):
+    r = client.post("/ui/api/secrets", headers=auth,
+                    json={"name": "http_key", "value": "wert-via-http"})
+    assert r.status_code == 200
+    assert vault.secret_get("http_key", client="test") == "wert-via-http"
+
+
+def test_secrets_liste_gibt_keine_werte_preis(client, auth, fresh_vault):
+    """Die Liste darf Namen zeigen — niemals Werte."""
+    vault.secret_set("k", "streng-geheim", client="test")
+    body = client.get("/ui/api/secrets", headers=auth).text
+    assert "k" in body
+    assert "streng-geheim" not in body
+
+
+def test_statischer_token_ist_konstantzeit_geprueft(client, fresh_vault):
+    """Ein Präfix des echten Tokens darf nicht durchkommen."""
+    kurz = TEST_MCP_TOKEN[:-1]
+    r = client.get("/ui/api/health", headers={"Authorization": f"Bearer {kurz}"})
+    assert r.status_code == 401

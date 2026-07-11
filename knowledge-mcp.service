@@ -1,0 +1,13 @@
+[Unit]
+Description=Knowledge MCP Hub (graphify + secrets vault, port 8300)
+After=network.target
+
+[Service]
+EnvironmentFile=%h/.config/knowledge-mcp/env
+WorkingDirectory=%h/knowledge-mcp
+ExecStart=%h/knowledge-mcp/.venv/bin/python server.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,371 @@
+"""Verschlüsselter Secrets-Vault (Format v2).
+
+**Zwei-Schichten-Modell**
+
+    Passwort ──scrypt──┐
+                       ├──► entpackt ──► Hauptschlüssel (MK) ──► entschlüsselt die Secrets
+    VAULT_KEY (env) ───┘        (optional, für den unbeaufsichtigten Betrieb)
+
+Die Secrets sind mit einem zufälligen **Hauptschlüssel** verschlüsselt (AES-256-GCM).
+Dieser Hauptschlüssel liegt selbst nur *verpackt* auf der Platte — in zwei Varianten:
+
+  * **Passwort-Verpackung** (immer vorhanden): scrypt(Zugangspasswort) entpackt ihn.
+    Damit ist das Passwort nirgends gespeichert — ein erfolgreiches Entpacken *ist* der Beweis,
+    dass es stimmt.
+  * **Env-Verpackung** (optional, Standard AN): der Schlüssel aus `VAULT_KEY` entpackt ihn.
+    Nur dafür da, dass der Server nach einem Neustart ohne Menschen weiterarbeiten kann
+    (Nacht-Mapping braucht den API-Key). Wer maximale Sicherheit will, schaltet sie ab —
+    dann bleibt der Vault nach jedem Neustart gesperrt, bis sich jemand anmeldet.
+
+Gegenüber v1 (nackter Schlüssel + Klartext-Passwort in `env`) gewonnen:
+  * Das Zugangspasswort steht nirgendwo mehr im Klartext.
+  * Ohne Env-Verpackung schützt der Vault auch gegen ein übernommenes Server-Konto.
+  * Passwort ändern, ohne die Secrets neu zu verschlüsseln (nur die Verpackung wird getauscht).
+
+v1-Vaults werden beim ersten Zugriff automatisch migriert (mit Sicherheitskopie).
+"""
+
+from __future__ import annotations
+
+import base64
+import json
+import os
+import secrets
+import time
+from pathlib import Path
+
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
+
+VAULT_PATH = Path(os.environ.get("VAULT_PATH", str(Path.home() / "knowledge-mcp" / "vault.enc")))
+AUDIT_PATH = VAULT_PATH.with_name("audit.log")
+
+_AAD = b"knowledge-mcp:vault:v1"          # v1-Daten (Migration)
+_AAD_DATA = b"knowledge-hub:vault:data"   # v2-Nutzdaten
+_AAD_WRAP = b"knowledge-hub:vault:wrap"   # v2-Schlüsselverpackung
+
+# scrypt: bewusst teuer (~100 ms, 64 MB) — macht Rateangriffe auf das Passwort unattraktiv.
+SCRYPT_N, SCRYPT_R, SCRYPT_P = 2**16, 8, 1
+
+_b64 = lambda b: base64.b64encode(b).decode()          # noqa: E731
+_unb64 = lambda s: base64.b64decode(s)                 # noqa: E731
+
+# Der entpackte Hauptschlüssel lebt nur im Arbeitsspeicher.
+_mk: bytes | None = None
+
+
+class VaultLocked(RuntimeError):
+    """Der Vault ist gesperrt — es muss erst entsperrt werden (Anmeldung)."""
+
+
+# ---------------------------------------------------------------------------
+# Schlüsselableitung / Verpackung
+# ---------------------------------------------------------------------------
+def _derive(password: str, salt: bytes) -> bytes:
+    return Scrypt(salt=salt, length=32, n=SCRYPT_N, r=SCRYPT_R, p=SCRYPT_P).derive(password.encode())
+
+
+def _wrap(key: bytes, mk: bytes) -> dict:
+    nonce = secrets.token_bytes(12)
+    return {"nonce": _b64(nonce), "ct": _b64(AESGCM(key).encrypt(nonce, mk, _AAD_WRAP))}
+
+
+def _unwrap(key: bytes, wrap: dict) -> bytes:
+    return AESGCM(key).decrypt(_unb64(wrap["nonce"]), _unb64(wrap["ct"]), _AAD_WRAP)
+
+
+def _env_key() -> bytes | None:
+    raw = os.environ.get("VAULT_KEY", "")
+    if not raw:
+        return None
+    key = base64.b64decode(raw)
+    return key if len(key) == 32 else None
+
+
+# ---------------------------------------------------------------------------
+# Datei lesen/schreiben
+# ---------------------------------------------------------------------------
+def _read_file() -> dict | None:
+    if not VAULT_PATH.exists():
+        return None
+    raw = VAULT_PATH.read_bytes()
+    if raw[:1] == b"{":
+        return json.loads(raw)
+    return {"version": 1, "raw": raw}      # altes Format
+
+
+def _write_file(doc: dict) -> None:
+    tmp = VAULT_PATH.with_suffix(".tmp")
+    tmp.write_text(json.dumps(doc, indent=1))
+    tmp.chmod(0o600)
+    tmp.replace(VAULT_PATH)
+
+
+def _new_vault(password: str, mk: bytes | None = None, secrets_map: dict | None = None) -> dict:
+    """Frischen v2-Vault bauen (mit Passwort-Verpackung, optional Env-Verpackung)."""
+    mk = mk or secrets.token_bytes(32)
+    salt = secrets.token_bytes(16)
+    doc = {
+        "version": 2,
+        "created": int(time.time()),
+        "wraps": {
+            "password": {
+                "salt": _b64(salt), "n": SCRYPT_N, "r": SCRYPT_R, "p": SCRYPT_P,
+                **_wrap(_derive(password, salt), mk),
+            }
+        },
+    }
+    ek = _env_key()
+    if ek:
+        doc["wraps"]["env"] = _wrap(ek, mk)   # unbeaufsichtigter Betrieb bleibt möglich
+    _write_data(doc, mk, secrets_map or {})
+    return doc
+
+
+def _write_data(doc: dict, mk: bytes, store: dict) -> None:
+    nonce = secrets.token_bytes(12)
+    ct = AESGCM(mk).encrypt(nonce, json.dumps(store).encode(), _AAD_DATA)
+    doc["data"] = {"nonce": _b64(nonce), "ct": _b64(ct)}
+
+
+def _read_data(doc: dict, mk: bytes) -> dict:
+    d = doc.get("data")
+    if not d:
+        return {}
+    return json.loads(AESGCM(mk).decrypt(_unb64(d["nonce"]), _unb64(d["ct"]), _AAD_DATA))
+
+
+# ---------------------------------------------------------------------------
+# Migration v1 -> v2
+# ---------------------------------------------------------------------------
+def _migrate_v1(doc: dict) -> dict:
+    """Alten Vault (nackter Schlüssel) in das Zwei-Schichten-Format überführen."""
+    ek = _env_key()
+    password = os.environ.get("OAUTH_PASSWORD", "")
+    if not ek:
+        raise VaultLocked("Alter Vault, aber kein VAULT_KEY in der Umgebung — Migration unmöglich.")
+    blob = doc["raw"]
+    store = json.loads(AESGCM(ek).decrypt(blob[:12], blob[12:], _AAD))
+
+    backup = VAULT_PATH.with_name(f"vault.enc.v1-{time.strftime('%Y%m%d-%H%M%S')}")
+    backup.write_bytes(blob)
+    backup.chmod(0o600)
+
+    if not password:
+        # Ohne bekanntes Passwort können wir keine Passwort-Verpackung anlegen.
+        # Dann bleibt es beim Env-Schlüssel (Sicherheitsniveau wie v1).
+        new = {"version": 2, "created": int(time.time()), "wraps": {"env": _wrap(ek, ek)}}
+        _write_data(new, ek, store)
+        _write_file(new)
+        audit("VAULT-MIGRATE", "v1->v2 (nur Env-Schlüssel)", client="system")
+        return new
+
+    new = _new_vault(password, mk=secrets.token_bytes(32), secrets_map=store)
+    _write_file(new)
+    audit("VAULT-MIGRATE", f"v1->v2, Sicherung {backup.name}", client="system")
+    return new
+
+
+def _doc() -> dict:
+    doc = _read_file()
+    if doc is None:
+        raise VaultLocked("Kein Vault vorhanden.")
+    if doc.get("version") == 1:
+        doc = _migrate_v1(doc)
+    return doc
+
+
+# ---------------------------------------------------------------------------
+# Entsperren / Sperren
+# ---------------------------------------------------------------------------
+def unlock(password: str) -> bool:
+    """Mit dem Zugangspasswort entsperren. Erfolg = Passwort war richtig."""
+    global _mk
+    try:
+        doc = _doc()
+        w = doc["wraps"].get("password")
+        if not w:
+            return False
+        key = Scrypt(salt=_unb64(w["salt"]), length=32,
+                     n=w.get("n", SCRYPT_N), r=w.get("r", SCRYPT_R), p=w.get("p", SCRYPT_P)
+                     ).derive(password.encode())
+        _mk = _unwrap(key, w)
+        return True
+    except Exception:  # noqa: BLE001 - falsches Passwort, kaputte Datei
+        return False
+
+
+def unlock_env() -> bool:
+    """Ohne Menschen entsperren (Env-Verpackung) — für Neustarts und den Nacht-Job."""
+    global _mk
+    ek = _env_key()
+    if not ek:
+        return False
+    try:
+        doc = _doc()
+        w = doc["wraps"].get("env")
+        if not w:
+            return False
+        _mk = _unwrap(ek, w)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def lock() -> None:
+    global _mk
+    _mk = None
+
+
+def is_unlocked() -> bool:
+    return _mk is not None
+
+
+def _key() -> bytes:
+    """Hauptschlüssel holen — notfalls automatisch per Env-Verpackung entsperren."""
+    if _mk is None and not unlock_env():
+        raise VaultLocked("Vault ist gesperrt — bitte anmelden.")
+    return _mk  # type: ignore[return-value]
+
+
+def status() -> dict:
+    try:
+        doc = _doc()
+    except VaultLocked:
+        return {"exists": False, "unlocked": False, "auto_unlock": False, "version": 0}
+    return {
+        "exists": True,
+        "unlocked": is_unlocked() or bool(doc["wraps"].get("env") and _env_key()),
+        "auto_unlock": bool(doc["wraps"].get("env")),
+        "has_password": bool(doc["wraps"].get("password")),
+        "version": doc.get("version", 1),
+    }
+
+
+def verify_password(password: str) -> bool:
+    """Passwort prüfen, ohne den Zustand zu ändern (für Anmeldung)."""
+    keep = _mk
+    ok = unlock(password)
+    if not ok:
+        globals()["_mk"] = keep      # Zustand nicht zerstören
+    return ok
+
+
+# ---------------------------------------------------------------------------
+# Verwaltung
+# ---------------------------------------------------------------------------
+def set_auto_unlock(enabled: bool) -> bool:
+    """Env-Verpackung an-/abschalten. Ohne sie bleibt der Vault nach einem Neustart
+    gesperrt, bis sich jemand anmeldet — dafür schützt er dann auch gegen ein
+    übernommenes Server-Konto."""
+    doc = _doc()
+    mk = _key()
+    if enabled:
+        ek = _env_key()
+        if not ek:
+            return False
+        doc["wraps"]["env"] = _wrap(ek, mk)
+    else:
+        doc["wraps"].pop("env", None)
+    _write_file(doc)
+    audit("VAULT-AUTOUNLOCK", "an" if enabled else "aus", client="web-ui")
+    return True
+
+
+def change_password(old: str, new: str) -> bool:
+    """Zugangspasswort ändern — die Secrets werden dabei NICHT neu verschlüsselt,
+    nur die Verpackung des Hauptschlüssels."""
+    if len(new) < 8:
+        raise ValueError("Das neue Passwort muss mindestens 8 Zeichen haben.")
+    doc = _doc()
+    w = doc["wraps"].get("password")
+    if w:
+        if not verify_password(old):
+            return False
+        mk = _mk or _key()
+    else:
+        mk = _key()          # Vault ohne Passwort-Verpackung (migriert ohne Passwort)
+    salt = secrets.token_bytes(16)
+    doc["wraps"]["password"] = {
+        "salt": _b64(salt), "n": SCRYPT_N, "r": SCRYPT_R, "p": SCRYPT_P,
+        **_wrap(_derive(new, salt), mk),
+    }
+    _write_file(doc)
+    audit("VAULT-PASSWORD", "geändert", client="web-ui")
+    return True
+
+
+def init(password: str) -> None:
+    """Frischen Vault anlegen (Erststart-Wizard).
+
+    Weigert sich, einen vorhandenen Vault zu überschreiben — das wäre der sichere Weg
+    in den Totalverlust aller Secrets.
+    """
+    global _mk
+    if VAULT_PATH.exists():
+        raise FileExistsError(
+            f"{VAULT_PATH} existiert bereits — Anlegen würde vorhandene Secrets vernichten."
+        )
+    doc = _new_vault(password)
+    _write_file(doc)
+    _mk = _unwrap(_derive(password, _unb64(doc["wraps"]["password"]["salt"])), doc["wraps"]["password"])
+
+
+# ---------------------------------------------------------------------------
+# Audit
+# ---------------------------------------------------------------------------
+def _clean(value: str, limit: int = 120) -> str:
+    """Steuerzeichen entfernen — sonst ließen sich mit einem Zeilenumbruch im
+    Secret-Namen gefälschte Audit-Einträge einschleusen (Log-Injection)."""
+    safe = "".join(c for c in str(value) if c.isprintable() and c not in "\r\n")
+    return safe[:limit] if safe else "?"
+
+
+def audit(action: str, name: str, client: str = "-") -> None:
+    line = (
+        f"{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())} "
+        f"{_clean(action, 24)} {_clean(name)} client={_clean(client, 24)}\n"
+    )
+    with AUDIT_PATH.open("a") as fh:
+        fh.write(line)
+
+
+# ---------------------------------------------------------------------------
+# Secrets (öffentliche API — unverändert)
+# ---------------------------------------------------------------------------
+def _load() -> dict[str, str]:
+    return _read_data(_doc(), _key())
+
+
+def _save(store: dict[str, str]) -> None:
+    doc = _doc()
+    _write_data(doc, _key(), store)
+    _write_file(doc)
+
+
+def secret_set(name: str, value: str, client: str = "-") -> None:
+    store = _load()
+    store[name] = value
+    _save(store)
+    audit("SET", name, client)
+
+
+def secret_get(name: str, client: str = "-") -> str | None:
+    store = _load()
+    audit("GET" if name in store else "GET-MISS", name, client)
+    return store.get(name)
+
+
+def secret_list(client: str = "-") -> list[str]:
+    store = _load()
+    audit("LIST", f"({len(store)} entries)", client)
+    return sorted(store)
+
+
+def secret_delete(name: str, client: str = "-") -> bool:
+    store = _load()
+    existed = name in store
+    store.pop(name, None)
+    _save(store)
+    audit("DELETE" if existed else "DELETE-MISS", name, client)
+    return existed

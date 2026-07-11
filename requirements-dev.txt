@@ -1,0 +1,10 @@
+# Knowledge Hub — Entwicklungs- und Testabhängigkeiten
+# Installation:  pip install -r requirements.txt -r requirements-dev.txt
+#                playwright install chromium
+# Versionen entsprechen der Installation, gegen die die Suite grün läuft.
+-r requirements.txt
+
+pytest==9.1.1
+pytest-playwright==0.8.0
+httpx==0.28.1            # von starlette.testclient benötigt
+ruff==0.15.21

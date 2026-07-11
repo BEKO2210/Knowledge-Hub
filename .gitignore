@@ -1,0 +1,33 @@
+# --- Niemals ins Repo: Schlüssel, Zustand, Daten --------------------------------
+vault.enc
+vault.enc.*
+audit.log
+errors.log
+errors.log.alt
+oauth_state.json
+ratelimit.json
+mapping_dismissed.json
+.env
+env
+config.yaml
+
+# Laufzeit-Artefakte
+build-logs/
+graphify-out/
+backups/
+*.khub
+*.tmp
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+# Werkzeuge
+node_modules/
+.DS_Store
+
+# Interne Planung: enthält Geschäftsplanung und persönliche Daten — bleibt privat
+ROADMAP.md
