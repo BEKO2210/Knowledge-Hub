@@ -34,8 +34,17 @@ TEST_VAULT_KEY = base64.urlsafe_b64encode(b"\x11" * 32).decode()
 )
 (_TMP / "projects").mkdir()
 
+# Eine eigene env-Datei. Ohne sie fiele setup_wizard.is_configured() auf
+# ~/.config/knowledge-mcp/env zurück: Auf einem Entwicklerrechner existiert die und
+# die Tests liefen grün — auf einer frischen Maschine (CI) nicht, und der Hub zeigte
+# statt der Oberfläche den Erststart-Assistenten. Genau das hat CI aufgedeckt.
+(_TMP / "env").write_text(
+    f"VAULT_KEY={TEST_VAULT_KEY}\nMCP_TOKEN={TEST_MCP_TOKEN}\n", encoding="utf-8"
+)
+
 os.environ.update(
     KNOWLEDGE_CONFIG=str(_TMP / "config.yaml"),
+    KMCP_ENV_FILE=str(_TMP / "env"),
     VAULT_PATH=str(_TMP / "vault.enc"),
     KMCP_DATA_DIR=str(_TMP),
     KNOWLEDGE_ROOT=str(_TMP / "projects"),
