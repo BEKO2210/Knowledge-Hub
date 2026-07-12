@@ -23,9 +23,11 @@ _STATE = Path(os.environ.get("KMCP_DATA_DIR", str(Path(__file__).parent))) / "ra
 # Fenster + Grenzen pro Aktion. Nach `limit` Fehlversuchen in `window` Sekunden
 # ist die IP für den Rest des Fensters gesperrt.
 _LIMITS = {
-    "login": (900, 5),     # 5 Fehlversuche / 15 min
-    "setup": (300, 10),    # frisches System: 10 / 5 min
+    "login": (900, 5),  # 5 Fehlversuche / 15 min
+    "setup": (300, 10),  # frisches System: 10 / 5 min
+    "write": (60, 120),  # 120 schreibende UI-Aufrufe / min (Drossel, kein Fehlversuchszähler)
 }
+
 
 def _load() -> dict[str, list[float]]:
     if _STATE.exists():
@@ -92,6 +94,35 @@ def record_failure(action: str, ip: str) -> int:
     return count
 
 
+_hits: dict[str, list[float]] = {}
+
+
+def throttle(action: str, ip: str) -> tuple[bool, bool]:
+    """Jeden Aufruf zählen — nicht nur Fehlversuche. (erlaubt, gerade_gesperrt).
+
+    Für die Schreib-Drossel: check()/record_failure() zählen Fehlschläge und
+    bestrafen dauerhaft; eine Drossel bremst dagegen auch ERFOLGREICHE Aufrufe
+    und vergisst von selbst, sobald das Fenster weiterwandert. Bewusst nur im
+    Speicher (kein _persist): Eine Drossel muss keinen Neustart überstehen,
+    und eine Datei pro Schreibzugriff wäre selbst eine Angriffsfläche.
+
+    `gerade_gesperrt` ist genau beim ersten abgelehnten Aufruf wahr — damit der
+    Aufrufer EINEN Audit-Eintrag schreibt statt einen pro geblocktem Versuch
+    (sonst könnte ein Angreifer über die Drossel das Audit-Log fluten).
+    """
+    window, limit = _LIMITS.get(action, (60, 120))
+    now = time.time()
+    with _lock:
+        hits = [t for t in _hits.get(_key(action, ip), []) if now - t < window]
+        erlaubt = len(hits) < limit
+        gerade_gesperrt = len(hits) == limit
+        # Auch abgelehnte Versuche zählen (Fenster wandert mit), aber die Liste
+        # deckeln — sonst wüchse sie mit jedem geblockten Versuch weiter.
+        hits.append(now)
+        _hits[_key(action, ip)] = hits[-(limit + 1) :]
+    return erlaubt, gerade_gesperrt
+
+
 def record_success(action: str, ip: str) -> None:
     """Erfolgreiche Anmeldung -> Zähler dieser IP zurücksetzen."""
     with _lock:
@@ -119,6 +150,5 @@ def blocked_ips() -> list[dict]:
             window, limit = _LIMITS.get(action, (900, 5))
             recent = [t for t in times if now - t < window]
             if len(recent) >= limit:
-                out.append({"action": action, "ip": ip,
-                            "until": int(max(recent) + window)})
+                out.append({"action": action, "ip": ip, "until": int(max(recent) + window)})
     return out

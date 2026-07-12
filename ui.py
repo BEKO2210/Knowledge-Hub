@@ -70,15 +70,11 @@ async def _on_unerwartet(request: Request, exc: Exception) -> JSONResponse:
 
 async def _on_kaputte_eingabe(request: Request, exc: Exception) -> JSONResponse:
     """Unlesbares JSON ist ein Fehler des Aufrufers, kein Serverabsturz."""
-    return JSONResponse(
-        {"error": T("Die Anfrage war kein gültiges JSON.")}, status_code=400
-    )
+    return JSONResponse({"error": T("Die Anfrage war kein gültiges JSON.")}, status_code=400)
 
 
 async def _on_gesperrt(request: Request, exc: Exception) -> JSONResponse:
-    return JSONResponse(
-        {"error": T("Der Vault ist gesperrt — bitte neu anmelden.")}, status_code=423
-    )
+    return JSONResponse({"error": T("Der Vault ist gesperrt — bitte neu anmelden.")}, status_code=423)
 
 
 async def _on_nicht_gefunden(request: Request, exc: Exception) -> JSONResponse:
@@ -121,8 +117,12 @@ async def web_asset(request: Request):
 
 
 STATIC_DIR = Path(__file__).parent / "static"
-_STATIC_TYPES = {".png": "image/png", ".js": "application/javascript",
-                 ".webmanifest": "application/manifest+json", ".woff2": "font/woff2"}
+_STATIC_TYPES = {
+    ".png": "image/png",
+    ".js": "application/javascript",
+    ".webmanifest": "application/manifest+json",
+    ".woff2": "font/woff2",
+}
 
 
 async def static_file(request: Request):
@@ -224,7 +224,12 @@ async def page(request: Request) -> HTMLResponse:
         # zum Überschreiben verleiten), sondern zur Wiederherstellung anleiten.
         if vault.VAULT_PATH.exists():
             return HTMLResponse(RECOVERY_HTML, status_code=409)
-        return HTMLResponse(render(setup_wizard.WIZARD_HTML))
+        # Der Wizard trägt seinen einzigen Skriptblock inline — seine CSP erlaubt genau
+        # diesen Block per Hash (SecurityHeaders lässt eine gesetzte CSP unangetastet).
+        return HTMLResponse(
+            render(setup_wizard.WIZARD_HTML),
+            headers={"Content-Security-Policy": setup_wizard.WIZARD_CSP},
+        )
     return HTMLResponse(render(UI_HTML))
 
 
@@ -256,15 +261,51 @@ class Sprache(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+class SchreibBremse(BaseHTTPMiddleware):
+    """Drossel auf alle schreibenden UI-Endpunkte (POST/PUT/PATCH/DELETE unter /ui/api/).
+
+    Die Anmeldung hat ihre eigene, viel strengere Bremse (5 Fehlversuche/15 min) —
+    diese hier fängt den Rest ab: ein Skript, das mit einem gestohlenen Sitzungs-Token
+    Secrets abräumt, Geräte-Tokens am Fließband erzeugt oder das Audit-Log über
+    abgelehnte Schreibversuche vollmüllt. 120 Aufrufe/min bremsen keinen Menschen.
+    """
+
+    async def dispatch(self, request, call_next):
+        from api.common import _client_ip
+
+        if request.method in ("POST", "PUT", "PATCH", "DELETE") and request.url.path.startswith("/ui/api/"):
+            import ratelimit
+
+            ip = _client_ip(request)
+            erlaubt, gerade_gesperrt = ratelimit.throttle("write", ip)
+            if not erlaubt:
+                if gerade_gesperrt:
+                    vault.audit("WRITE-THROTTLED", f"{request.method} {request.url.path}", client=ip)
+                return JSONResponse(
+                    {"error": T("Zu viele Änderungen in kurzer Zeit — bitte einen Moment warten.")},
+                    status_code=429,
+                    headers={"Retry-After": "60"},
+                )
+        return await call_next(request)
+
+
 class SecurityHeaders(BaseHTTPMiddleware):
     """Schutz-Header für alle UI-Antworten."""
 
     async def dispatch(self, request, call_next):
         resp = await call_next(request)
-        resp.headers["Content-Security-Policy"] = (
-            "default-src 'self'; script-src 'self' 'unsafe-inline'; "
+        # script-src OHNE 'unsafe-inline': Selbst wenn es ein Angreifer schafft, Markup in
+        # die Seite zu bekommen (XSS), führt der Browser daraus keinen Code aus. Der Preis
+        # dafür war, jeden Inline-Handler (onclick="…") auf das Aktions-Register in app.js
+        # umzustellen. style-src bleibt bei 'unsafe-inline' — Inline-STYLE kann keinen Code
+        # ausführen; das Risiko ist eine andere Klasse als Inline-SKRIPT.
+        # setdefault statt Zuweisung: Der Setup-Wizard bringt seine eigene CSP mit
+        # (Hash auf seinen einzigen Skriptblock) — die darf hier nicht überschrieben werden.
+        resp.headers.setdefault(
+            "Content-Security-Policy",
+            "default-src 'self'; script-src 'self'; "
             "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
-            "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+            "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
         )
         resp.headers["X-Content-Type-Options"] = "nosniff"
         resp.headers["X-Frame-Options"] = "DENY"
@@ -287,71 +328,80 @@ class SecurityHeaders(BaseHTTPMiddleware):
 
 import setup_wizard  # noqa: E402 - nach config/vault, vermeidet Zirkelimport
 
-ui_app = Starlette(middleware=[Middleware(Sprache), Middleware(SecurityHeaders), Middleware(VaultGate)], exception_handlers={
-    json.JSONDecodeError: _on_kaputte_eingabe,
-    vault.VaultLocked: _on_gesperrt,
-    404: _on_nicht_gefunden,
-    Exception: _on_unerwartet,
-}, routes=[
-    Route("/ui", page),
-    Route("/ui/", page),
-    Route("/ui/setup", setup_wizard.wizard_page),
-    Route("/ui/setup/status", setup_wizard.setup_status),
-    Route("/ui/setup/submit", setup_wizard.setup_submit, methods=["POST"]),
-    Route("/ui/setup/restart", setup_wizard.setup_restart, methods=["POST"]),
-    # Wurzel-Icons: Clients fragen sie ohne /ui-Präfix ab (Browser-Tab, Connector-Liste).
-    Route("/favicon.ico", root_icon),
-    Route("/favicon.png", root_icon),
-    Route("/apple-touch-icon.png", root_icon),
-    Route("/apple-touch-icon-precomposed.png", root_icon),
-    Route("/ui/static/{name}", static_file),
-    Route("/ui/asset/{name}", web_asset),
-    Route("/ui/manifest.json", manifest),
-    Route("/ui/api/login", auth.login, methods=["POST"]),
-    Route("/ui/api/projects", knowledge.projects),
-    Route("/ui/api/graph/{project}", knowledge.graph),
-    Route("/ui/api/ask/{project}", knowledge.graph_ask, methods=["POST"]),
-    Route("/ui/api/report/{project}", knowledge.report),
-    Route("/ui/api/explain/{project}", knowledge.explain),
-    Route("/ui/api/answers/{project}", knowledge.antworten_liste),
-    Route("/ui/api/secrets", secrets.secrets_list),
-    Route("/ui/api/secrets", secrets.secrets_set, methods=["POST"]),
-    Route("/ui/api/secrets/{name}", secrets.secrets_get),
-    Route("/ui/api/secrets/{name}", secrets.secrets_delete, methods=["DELETE"]),
-    Route("/ui/api/audit", secrets.audit),
-    Route("/ui/api/health", system.health),
-    Route("/ui/api/unblock", auth.unblock_ips, methods=["POST"]),
-    Route("/ui/api/2fa", system.twofa_status),
-    Route("/ui/api/2fa/setup", system.twofa_setup, methods=["POST"]),
-    Route("/ui/api/2fa/enable", system.twofa_enable, methods=["POST"]),
-    Route("/ui/api/2fa/disable", system.twofa_disable, methods=["POST"]),
-    Route("/ui/api/vault", system.vault_status),
-    Route("/ui/api/vault/autounlock", system.vault_autounlock, methods=["POST"]),
-    Route("/ui/api/vault/password", system.vault_password, methods=["POST"]),
-    Route("/ui/api/backup", system.backup_status),
-    Route("/ui/api/backup/run", system.backup_now, methods=["POST"]),
-    Route("/ui/api/backup/target", system.backup_target, methods=["POST"]),
-    Route("/ui/api/backup/target", system.backup_target_delete, methods=["DELETE"]),
-    Route("/ui/api/backup/setup", system.backup_setup, methods=["POST"]),
-    Route("/ui/api/connect/info", auth.connect_info),
-    Route("/ui/api/connect/token", auth.connect_token, methods=["POST"]),
-    Route("/ui/api/sessions", auth.sessions_list),
-    Route("/ui/api/sessions", auth.sessions_revoke_all, methods=["DELETE"]),
-    Route("/ui/api/sessions/{sid}", auth.session_revoke, methods=["DELETE"]),
-    Route("/ui/api/mapping/status", mapping.mapping_status),
-    Route("/ui/api/mapping/toggle", mapping.mapping_toggle, methods=["POST"]),
-    Route("/ui/api/mapping/config", mapping.mapping_config, methods=["POST"]),
-    Route("/ui/api/mapping/run", mapping.mapping_run, methods=["POST"]),
-    Route("/ui/api/mapping/log", mapping.mapping_log),
-    Route("/ui/api/mapping/history", mapping.mapping_history),
-    Route("/ui/api/mapping/history/dismiss", mapping.mapping_dismiss, methods=["POST"]),
-    Route("/ui/api/mapping/projects", mapping.mapping_projects),
-    Route("/ui/api/mapping/projects", mapping.mapping_project_add, methods=["POST"]),
-    Route("/ui/api/mapping/projects", mapping.mapping_project_update, methods=["PATCH"]),
-    Route("/ui/api/mapping/check", mapping.project_check),
-    Route("/ui/api/mapping/repair", mapping.project_repair, methods=["POST"]),
-    Route("/ui/api/mapping/repair", mapping.project_repair_status),
-    Route("/ui/api/browse", mapping.browse_dirs),
-    Route("/ui/api/mapping/ignore", mapping.ignore_get),
-    Route("/ui/api/mapping/ignore", mapping.ignore_put, methods=["PUT"]),
-])
+ui_app = Starlette(
+    middleware=[
+        Middleware(Sprache),
+        Middleware(SchreibBremse),
+        Middleware(SecurityHeaders),
+        Middleware(VaultGate),
+    ],
+    exception_handlers={
+        json.JSONDecodeError: _on_kaputte_eingabe,
+        vault.VaultLocked: _on_gesperrt,
+        404: _on_nicht_gefunden,
+        Exception: _on_unerwartet,
+    },
+    routes=[
+        Route("/ui", page),
+        Route("/ui/", page),
+        Route("/ui/setup", setup_wizard.wizard_page),
+        Route("/ui/setup/status", setup_wizard.setup_status),
+        Route("/ui/setup/submit", setup_wizard.setup_submit, methods=["POST"]),
+        Route("/ui/setup/restart", setup_wizard.setup_restart, methods=["POST"]),
+        # Wurzel-Icons: Clients fragen sie ohne /ui-Präfix ab (Browser-Tab, Connector-Liste).
+        Route("/favicon.ico", root_icon),
+        Route("/favicon.png", root_icon),
+        Route("/apple-touch-icon.png", root_icon),
+        Route("/apple-touch-icon-precomposed.png", root_icon),
+        Route("/ui/static/{name}", static_file),
+        Route("/ui/asset/{name}", web_asset),
+        Route("/ui/manifest.json", manifest),
+        Route("/ui/api/login", auth.login, methods=["POST"]),
+        Route("/ui/api/projects", knowledge.projects),
+        Route("/ui/api/graph/{project}", knowledge.graph),
+        Route("/ui/api/ask/{project}", knowledge.graph_ask, methods=["POST"]),
+        Route("/ui/api/report/{project}", knowledge.report),
+        Route("/ui/api/explain/{project}", knowledge.explain),
+        Route("/ui/api/answers/{project}", knowledge.antworten_liste),
+        Route("/ui/api/secrets", secrets.secrets_list),
+        Route("/ui/api/secrets", secrets.secrets_set, methods=["POST"]),
+        Route("/ui/api/secrets/{name}", secrets.secrets_get),
+        Route("/ui/api/secrets/{name}", secrets.secrets_delete, methods=["DELETE"]),
+        Route("/ui/api/audit", secrets.audit),
+        Route("/ui/api/health", system.health),
+        Route("/ui/api/unblock", auth.unblock_ips, methods=["POST"]),
+        Route("/ui/api/2fa", system.twofa_status),
+        Route("/ui/api/2fa/setup", system.twofa_setup, methods=["POST"]),
+        Route("/ui/api/2fa/enable", system.twofa_enable, methods=["POST"]),
+        Route("/ui/api/2fa/disable", system.twofa_disable, methods=["POST"]),
+        Route("/ui/api/vault", system.vault_status),
+        Route("/ui/api/vault/autounlock", system.vault_autounlock, methods=["POST"]),
+        Route("/ui/api/vault/password", system.vault_password, methods=["POST"]),
+        Route("/ui/api/backup", system.backup_status),
+        Route("/ui/api/backup/run", system.backup_now, methods=["POST"]),
+        Route("/ui/api/backup/target", system.backup_target, methods=["POST"]),
+        Route("/ui/api/backup/target", system.backup_target_delete, methods=["DELETE"]),
+        Route("/ui/api/backup/setup", system.backup_setup, methods=["POST"]),
+        Route("/ui/api/connect/info", auth.connect_info),
+        Route("/ui/api/connect/token", auth.connect_token, methods=["POST"]),
+        Route("/ui/api/sessions", auth.sessions_list),
+        Route("/ui/api/sessions", auth.sessions_revoke_all, methods=["DELETE"]),
+        Route("/ui/api/sessions/{sid}", auth.session_revoke, methods=["DELETE"]),
+        Route("/ui/api/mapping/status", mapping.mapping_status),
+        Route("/ui/api/mapping/toggle", mapping.mapping_toggle, methods=["POST"]),
+        Route("/ui/api/mapping/config", mapping.mapping_config, methods=["POST"]),
+        Route("/ui/api/mapping/run", mapping.mapping_run, methods=["POST"]),
+        Route("/ui/api/mapping/log", mapping.mapping_log),
+        Route("/ui/api/mapping/history", mapping.mapping_history),
+        Route("/ui/api/mapping/history/dismiss", mapping.mapping_dismiss, methods=["POST"]),
+        Route("/ui/api/mapping/projects", mapping.mapping_projects),
+        Route("/ui/api/mapping/projects", mapping.mapping_project_add, methods=["POST"]),
+        Route("/ui/api/mapping/projects", mapping.mapping_project_update, methods=["PATCH"]),
+        Route("/ui/api/mapping/check", mapping.project_check),
+        Route("/ui/api/mapping/repair", mapping.project_repair, methods=["POST"]),
+        Route("/ui/api/mapping/repair", mapping.project_repair_status),
+        Route("/ui/api/browse", mapping.browse_dirs),
+        Route("/ui/api/mapping/ignore", mapping.ignore_get),
+        Route("/ui/api/mapping/ignore", mapping.ignore_put, methods=["PUT"]),
+    ],
+)

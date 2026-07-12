@@ -25,8 +25,11 @@ async def secrets_set(request: Request) -> JSONResponse:
     if not name or not value:
         return JSONResponse({"error": T("Name und Wert sind Pflicht")}, status_code=400)
     # Erlaubt: Buchstaben, Ziffern, _ . - und Leerzeichen. Alles andere (Steuerzeichen,
-    # Zeilenumbrüche, Pfadtrenner) wird abgelehnt.
+    # Zeilenumbrüche, Pfadtrenner) wird abgelehnt. Der Vault prüft dasselbe noch einmal —
+    # hier passiert es nur früher, damit die Meldung übersetzt ankommt. Abgelehnte
+    # Versuche landen im Audit-Log: Herumprobieren hinterlässt eine Spur.
     if not SECRET_NAME_RE.match(name):
+        vault.audit("SET-REJECT", f"{name} (Name unzulässig)", client="web-ui")
         return JSONResponse(
             {
                 "error": T(
@@ -36,7 +39,8 @@ async def secrets_set(request: Request) -> JSONResponse:
             },
             status_code=400,
         )
-    if len(value) > 20000:
+    if len(value) > vault.SECRET_VALUE_MAX:
+        vault.audit("SET-REJECT", f"{name} (Wert {len(value)} Zeichen)", client="web-ui")
         return JSONResponse({"error": T("Wert ist zu lang (max. 20.000 Zeichen)")}, status_code=400)
     vault.secret_set(name, value, client="web-ui")
     return JSONResponse({"ok": True})

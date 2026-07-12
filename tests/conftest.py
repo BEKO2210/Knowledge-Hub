@@ -38,9 +38,7 @@ TEST_VAULT_KEY = base64.urlsafe_b64encode(b"\x11" * 32).decode()
 # ~/.config/knowledge-mcp/env zurück: Auf einem Entwicklerrechner existiert die und
 # die Tests liefen grün — auf einer frischen Maschine (CI) nicht, und der Hub zeigte
 # statt der Oberfläche den Erststart-Assistenten. Genau das hat CI aufgedeckt.
-(_TMP / "env").write_text(
-    f"VAULT_KEY={TEST_VAULT_KEY}\nMCP_TOKEN={TEST_MCP_TOKEN}\n", encoding="utf-8"
-)
+(_TMP / "env").write_text(f"VAULT_KEY={TEST_VAULT_KEY}\nMCP_TOKEN={TEST_MCP_TOKEN}\n", encoding="utf-8")
 
 os.environ.update(
     KNOWLEDGE_CONFIG=str(_TMP / "config.yaml"),
@@ -69,7 +67,8 @@ def fresh_state():
     for f in ("vault.enc", "audit.log", "ratelimit.json", "oauth_state.json"):
         (_TMP / f).unlink(missing_ok=True)
     vault.lock()
-    ratelimit._fails.clear()   # der Zähler lebt im Speicher, nicht nur in der Datei
+    ratelimit._fails.clear()  # der Zähler lebt im Speicher, nicht nur in der Datei
+    ratelimit._hits.clear()  # Schreib-Drossel: sonst sperren 120 Aufrufe frühere Tests aus
     yield
     vault.lock()
 

@@ -79,10 +79,10 @@ def _activate(vault_key: str, mcp_token: str, password: str) -> None:
     import oauth as _oauth
     import server as _server
 
-    os.environ["VAULT_KEY"] = vault_key      # vault liest den Key bei jedem Zugriff neu
+    os.environ["VAULT_KEY"] = vault_key  # vault liest den Key bei jedem Zugriff neu
     os.environ["MCP_TOKEN"] = mcp_token
     os.environ["OAUTH_PASSWORD"] = password
-    _oauth.OAUTH_PASSWORD = password          # Modul-Konstanten nachziehen
+    _oauth.OAUTH_PASSWORD = password  # Modul-Konstanten nachziehen
     _server.MCP_TOKEN = mcp_token
 
 
@@ -106,9 +106,9 @@ async def setup_submit(request: Request) -> JSONResponse:
         return JSONResponse(
             {
                 "error": "Es existiert bereits ein Vault mit Secrets. Die Einrichtung würde ihn "
-                         "überschreiben und wurde deshalb abgebrochen. Wenn die env-Datei fehlt, "
-                         "spiele sie aus deiner Sicherung zurück (backup.py restore) — "
-                         "nicht neu einrichten!",
+                "überschreiben und wurde deshalb abgebrochen. Wenn die env-Datei fehlt, "
+                "spiele sie aus deiner Sicherung zurück (backup.py restore) — "
+                "nicht neu einrichten!",
             },
             status_code=409,
         )
@@ -133,7 +133,9 @@ async def setup_submit(request: Request) -> JSONResponse:
     name = str(body.get("name", "")).strip() or "Knowledge Hub"
     public_url = str(body.get("public_url", "")).strip() or "http://127.0.0.1:8300"
     if not re.match(r"^https?://", public_url):
-        return JSONResponse({"error": "Öffentliche URL muss mit http:// oder https:// beginnen."}, status_code=400)
+        return JSONResponse(
+            {"error": "Öffentliche URL muss mit http:// oder https:// beginnen."}, status_code=400
+        )
 
     vault_key = base64.b64encode(secrets.token_bytes(32)).decode()
     mcp_token = secrets.token_urlsafe(32)
@@ -145,17 +147,19 @@ async def setup_submit(request: Request) -> JSONResponse:
 
     import vault as _vault
 
-    _vault.init(password)   # legt Vault v2 an: Passwort- + Env-Verpackung
+    _vault.init(password)  # legt Vault v2 an: Passwort- + Env-Verpackung
 
     # config.yaml um Branding/URL ergänzen, Rest unangetastet lassen
     cfg = {}
     if config.CONFIG_PATH.exists():
         import yaml
+
         cfg = yaml.safe_load(config.CONFIG_PATH.read_text()) or {}
     cfg.setdefault("server", {})["public_url"] = public_url
     cfg.setdefault("branding", {})["name"] = name
     config.CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     import yaml
+
     config.CONFIG_PATH.write_text(
         "# Knowledge Hub — zentrale Konfiguration\n"
         "# Secrets gehören NICHT hierher, sondern in ./env.\n\n"
@@ -191,7 +195,7 @@ async def setup_restart(request: Request) -> JSONResponse:
 async def wizard_page(request: Request) -> HTMLResponse:
     import ui
 
-    return HTMLResponse(ui.render(WIZARD_HTML))
+    return HTMLResponse(ui.render(WIZARD_HTML), headers={"Content-Security-Policy": WIZARD_CSP})
 
 
 WIZARD_HTML = r"""<!doctype html>
@@ -285,7 +289,7 @@ padding:6px 10px;font-size:.78rem;cursor:pointer;display:inline-flex;gap:6px;ali
       <div><b>Secrets-Vault</b><span>API-Keys & Passwörter AES-256-verschlüsselt an einem Ort.</span></div></div>
     <div class="feat"><svg class="ic" viewBox="0 0 24 24"><use href="#i-spark"/></svg>
       <div><b>Automatisches Mapping</b><span>Nächtlich hält sich dein Wissen selbst aktuell.</span></div></div>
-    <button class="btn" onclick="go(1)">Los geht's<svg class="ic" viewBox="0 0 24 24"><use href="#i-arrow"/></svg></button>
+    <button class="btn" id="startbtn">Los geht's<svg class="ic" viewBox="0 0 24 24"><use href="#i-arrow"/></svg></button>
   </section>
 
   <!-- Schritt 2: Passwort + Branding -->
@@ -296,18 +300,18 @@ padding:6px 10px;font-size:.78rem;cursor:pointer;display:inline-flex;gap:6px;ali
     <label for="pw">Zugangspasswort</label>
     <div class="pwwrap">
       <input type="password" id="pw" autocomplete="new-password" placeholder="mindestens 8 Zeichen"
-             oninput="strength()" autofocus>
-      <button type="button" class="eye" aria-label="Passwort anzeigen" onclick="eye('pw',this)">
+             autofocus>
+      <button type="button" class="eye" id="pweye" aria-label="Passwort anzeigen">
         <svg class="ic" viewBox="0 0 24 24"><use href="#i-eye"/></svg></button>
     </div>
     <div class="strength"><i id="strbar"></i></div>
     <div class="hint" id="strhint">Tipp: mehrere Wörter oder ein Satz sind sicherer als Sonderzeichen.</div>
     <label for="pw2">Passwort wiederholen</label>
-    <input type="password" id="pw2" autocomplete="new-password" placeholder="zur Bestätigung" oninput="strength()">
+    <input type="password" id="pw2" autocomplete="new-password" placeholder="zur Bestätigung">
     <label for="hubname">Name des Hubs <span style="color:var(--mut2)">(optional)</span></label>
     <input type="text" id="hubname" value="Knowledge Hub" maxlength="40">
     <p class="err" id="err2" role="alert"></p>
-    <button class="btn" id="next2" onclick="submitSetup()" disabled>
+    <button class="btn" id="next2" disabled>
       Einrichten & Schlüssel erzeugen<svg class="ic" viewBox="0 0 24 24"><use href="#i-arrow"/></svg></button>
   </section>
 
@@ -317,11 +321,11 @@ padding:6px 10px;font-size:.78rem;cursor:pointer;display:inline-flex;gap:6px;ali
     <p class="lead">Dein Vault-Schlüssel und dein API-Token wurden erzeugt und sicher gespeichert.</p>
     <div class="keybox"><div class="k">VAULT-SCHLÜSSEL (entschlüsselt deinen Vault)</div><div class="v" id="vk"></div></div>
     <div class="keybox"><div class="k">MCP-TOKEN (für Nicht-Browser-Clients)</div><div class="v" id="mt"></div></div>
-    <button class="copybtn" onclick="copyKeys()"><svg class="ic" style="width:15px;height:15px" viewBox="0 0 24 24"><use href="#i-copy"/></svg>Beide kopieren</button>
+    <button class="copybtn" id="copybtn"><svg class="ic" style="width:15px;height:15px" viewBox="0 0 24 24"><use href="#i-copy"/></svg>Beide kopieren</button>
     <div class="warn"><svg class="ic" viewBox="0 0 24 24"><use href="#i-alert"/></svg>
       <div><b>Sichere den Vault-Schlüssel jetzt.</b> Ohne ihn sind gespeicherte Secrets unwiederbringlich verloren.
       Er liegt auf dem Server, aber ein Offline-Backup schützt zusätzlich.</div></div>
-    <button class="btn" id="finishbtn" onclick="finish()">Server starten & anmelden<svg class="ic" viewBox="0 0 24 24"><use href="#i-arrow"/></svg></button>
+    <button class="btn" id="finishbtn">Server starten & anmelden<svg class="ic" viewBox="0 0 24 24"><use href="#i-arrow"/></svg></button>
     <p class="hint" id="restarthint" style="text-align:center;margin-top:1rem"></p>
   </section>
 </div>
@@ -397,5 +401,31 @@ async function finish() {
     if (tries > 40) { clearInterval(poll); location.href = '/ui'; }
   }, 1000);
 }
+
+// Ereignisse hier statt als onclick-Attribute: Die CSP erlaubt nur diesen einen
+// Skriptblock (per Hash) — Inline-Handler im Markup führt der Browser nicht aus.
+$('startbtn').addEventListener('click', () => go(1));
+$('pweye').addEventListener('click', e => eye('pw', e.currentTarget));
+$('pw').addEventListener('input', strength);
+$('pw2').addEventListener('input', strength);
+$('next2').addEventListener('click', submitSetup);
+$('copybtn').addEventListener('click', copyKeys);
+$('finishbtn').addEventListener('click', finish);
 </script></body></html>
 """
+
+# CSP-Hash über den einen Skriptblock des Wizards. Die Oberfläche verbietet Inline-
+# Skripte (script-src 'self'); der Wizard ist aber eine einzelne, in sich geschlossene
+# Seite ohne eigene Asset-Dateien. Der Hash erlaubt GENAU diesen Block — würde ihn
+# jemand unterwegs verändern, führt der Browser ihn nicht mehr aus.
+# Wichtig: ui.render() ersetzt __BRAND__/__V__ nur im Markup, nie im Skriptblock —
+# sonst stimmte der Hash nicht mehr (test_sicherheit prüft das).
+import hashlib as _hashlib  # noqa: E402 - direkt beim Verbraucher
+
+_SCRIPT = re.search(r"<script>(.*)</script>", WIZARD_HTML, re.S).group(1)
+WIZARD_SCRIPT_HASH = "sha256-" + base64.b64encode(_hashlib.sha256(_SCRIPT.encode()).digest()).decode()
+WIZARD_CSP = (
+    f"default-src 'self'; script-src '{WIZARD_SCRIPT_HASH}'; "
+    "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+    "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+)

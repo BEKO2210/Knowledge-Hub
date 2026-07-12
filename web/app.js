@@ -1929,7 +1929,7 @@ async function loadTwoFA() {
           <div style="font-weight:600;font-size:.92rem">${t('Aktiv')}</div>
           <p style="margin:4px 0 0;color:var(--mut);font-size:.82rem;line-height:1.55">
             ${t2('Beim Anmelden wird zusätzlich zum Passwort ein Code aus deiner App verlangt. Noch <b>{n}</b> Wiederherstellungscodes übrig.', {n: s.recovery_left})}</p>
-          <form style="display:flex;gap:var(--sp-2);flex-wrap:wrap;margin-top:var(--sp-3)" onsubmit="disable2fa(event)">
+          <form style="display:flex;gap:var(--sp-2);flex-wrap:wrap;margin-top:var(--sp-3)" data-form="twofa-disable">
             <input id="off2fa" placeholder="${t('Aktueller Code zum Abschalten')}" inputmode="numeric"
                    maxlength="9" style="flex:1;min-width:12rem">
             <button class="btn danger" style="min-height:44px">${t('2FA ausschalten')}</button>
@@ -1941,7 +1941,7 @@ async function loadTwoFA() {
   box.innerHTML = `
     <p style="margin:0 0 var(--sp-3);color:var(--mut);font-size:.84rem;line-height:1.6">
       ${t('Schütze deinen Zugang mit einer Authenticator-App (Google Authenticator, Aegis, 1Password …). Selbst wer dein Passwort kennt, kommt dann ohne dein Handy nicht rein.')}</p>
-    <button class="btn" id="start2fa" onclick="setup2fa()">
+    <button class="btn" id="start2fa" data-act="twofa-setup">
       <svg class="ic" viewBox="0 0 24 24"><use href="#i-shieldcheck"/></svg>${t('Einrichten')}</button>`;
 }
 async function setup2fa() {
@@ -1965,7 +1965,7 @@ async function setup2fa() {
       ${t('Kein Scanner? Geheimnis von Hand eintragen:')}</p>
     <div class="mono" style="background:var(--bg);border:1px solid var(--line2);border-radius:var(--r-sm);
          padding:10px 12px;font-size:.82rem;color:var(--acc);user-select:all;overflow-wrap:anywhere">${d.secret}</div>
-    <form style="margin-top:var(--sp-4)" onsubmit="enable2fa(event)">
+    <form style="margin-top:var(--sp-4)" data-form="twofa-enable">
       <label style="font-size:.84rem;color:var(--mut);display:block;margin-bottom:.4rem">
         ${t('<b>2.</b> Bestätige mit dem aktuellen Code aus der App:')}</label>
       <div style="display:flex;gap:var(--sp-2);flex-wrap:wrap">
@@ -1993,10 +1993,10 @@ async function enable2fa(e) {
         <div class="mono" id="reccodes" style="background:var(--bg);border:1px solid var(--line2);
              border-radius:var(--r-sm);padding:12px 14px;font-size:.86rem;line-height:1.9;
              color:var(--acc);user-select:all;columns:2"></div>
-        <button class="btn ghost" style="margin-top:10px;min-height:38px;font-size:.82rem" onclick="copyRecovery()">
+        <button class="btn ghost" style="margin-top:10px;min-height:38px;font-size:.82rem" data-act="twofa-copy">
           <svg class="ic" viewBox="0 0 24 24"><use href="#i-copy"/></svg>${t('Kopieren')}</button>
         <button class="btn" style="margin-top:10px;margin-left:8px;min-height:38px;font-size:.82rem"
-                onclick="loadTwoFA()">${t('Fertig')}</button>
+                data-act="twofa-done">${t('Fertig')}</button>
       </div>
     </div>`;
   window.__recovery = j.recovery;
@@ -2042,7 +2042,7 @@ async function loadVault() {
       </div>
     </div>
     <form style="margin-top:var(--sp-4);border-top:1px solid var(--line);padding-top:var(--sp-4)"
-          onsubmit="changePassword(event)">
+          data-form="password">
       <div style="font-weight:600;font-size:.92rem;margin-bottom:var(--sp-3)">${t('Zugangspasswort ändern')}</div>
       <div style="display:flex;gap:var(--sp-2);flex-wrap:wrap">
         <input type="password" id="pwold" placeholder="${t('Aktuelles Passwort')}" autocomplete="current-password"
@@ -2092,7 +2092,7 @@ async function loadBackup() {
           <div style="font-weight:600;margin-bottom:2px">${t('Es wird nichts gesichert')}</div>
           <p style="margin:0 0 var(--sp-3);color:var(--mut);font-size:.84rem;line-height:1.6">
             ${t('Stirbt die Festplatte, sind alle Secrets unwiederbringlich weg. Richte eine Sicherung ein: Vault, Schlüssel und Einstellungen werden dann verschlüsselt in deinen Backup-Ordner und in dein privates Git-Repo gelegt — nur mit der Backup-Passphrase lesbar.')}</p>
-          <button class="btn" id="bsetup" onclick="setupBackup()">
+          <button class="btn" id="bsetup" data-act="backupsetup">
             <svg class="ic" viewBox="0 0 24 24"><use href="#i-shield"/></svg>${t('Sicherung einrichten')}</button>
         </div>
       </div>`;
@@ -2119,17 +2119,17 @@ async function loadBackup() {
          ${t2('Offsite-Ziel (Git-Repository) {action}', {action: git ? t('ändern') : t('einrichten')})}</summary>
        <p style="color:var(--mut);font-size:.82rem;line-height:1.6;margin:10px 0">
          ${t('Damit die Sicherung einen Plattenausfall übersteht, gehört sie in ein Repository auf einem anderen Rechner. Die Datei ist verschlüsselt — das Repo sieht nur unlesbare Daten. Für GitHub brauchst du einen Zugriffstoken mit Schreibrecht auf genau dieses Repo (<span class="mono" style="font-size:.9em">Settings → Developer settings → Personal access tokens → Fine-grained → Contents: Read and write</span>). Der Token wird im Vault verschlüsselt.')}</p>
-       <form onsubmit="saveBackupTarget(event)" style="display:flex;flex-direction:column;gap:var(--sp-2)">
+       <form data-form="backuptarget" style="display:flex;flex-direction:column;gap:var(--sp-2)">
          <input id="giturl" placeholder="${t('https://github.com/deinname/dein-backup-repo.git')}"
                 value="${git && git.url ? git.url : ''}" autocomplete="off" spellcheck="false" required>
          <label style="font-size:.78rem;color:var(--mut);margin-top:2px">${t('Zugriffstoken')}</label>
-         <select id="gitsecret" onchange="gitTokenSourceChanged()">
+         <select id="gitsecret" data-change="gitsource">
            <option value="">${t('— neuen Token eingeben —')}</option>
          </select>
          <div class="pwwrap" id="gittokenwrap">
            <input type="password" id="gittoken" placeholder="${t('GitHub-Token (ghp_… oder github_pat_…)')}"
                   autocomplete="off">
-           <button type="button" aria-label="${t('Token anzeigen')}" onclick="togglePw('gittoken',this)">
+           <button type="button" aria-label="${t('Token anzeigen')}" data-act="togglepw" data-arg="gittoken">
              <svg class="ic" viewBox="0 0 24 24"><use href="#i-eye"/></svg></button>
          </div>
          <div style="display:flex;gap:var(--sp-2);flex-wrap:wrap">
@@ -2140,7 +2140,7 @@ async function loadBackup() {
          </div>
          <div style="display:flex;gap:var(--sp-2);flex-wrap:wrap">
            <button class="btn" id="gitsave" style="min-height:42px">${t('Ziel speichern')}</button>
-           ${git ? `<button type="button" class="btn danger" style="min-height:42px" onclick="removeBackupTarget()">${t('Ziel entfernen')}</button>` : ''}
+           ${git ? `<button type="button" class="btn danger" style="min-height:42px" data-act="backupremove">${t('Ziel entfernen')}</button>` : ''}
          </div>
        </form>
      </details>`;
@@ -2174,7 +2174,7 @@ async function setupBackup() {
         <button class="btn ghost" style="margin-top:10px;min-height:38px;font-size:.82rem" id="ppcopy">
           <svg class="ic" viewBox="0 0 24 24"><use href="#i-copy"/></svg>${t('Kopieren')}</button>
         <button class="btn" style="margin-top:10px;margin-left:8px;min-height:38px;font-size:.82rem"
-                onclick="loadBackup();runBackup()">${t('Habe ich gesichert — jetzt sichern')}</button>
+                data-act="backupconfirmed">${t('Habe ich gesichert — jetzt sichern')}</button>
       </div>
     </div>`;
   $('ppval').textContent = j.passphrase;
@@ -2291,4 +2291,108 @@ window.addEventListener('unhandledrejection', e => {
   // Diese drei behandeln wir bereits gezielt — kein doppeltes Banner.
   if (/unauthorized|locked|server error/.test(m)) return;
   if (m) showError(t2('Ein Fehler in der Oberfläche: {msg}', {msg: m}));
+});
+
+/* ================= Aktions-Register =================
+   Ersatz für Inline-Handler (onclick="…"): Die CSP verbietet Inline-Skripte
+   (script-src 'self'), damit eingeschleustes Markup niemals Code ausführen kann.
+   Jedes klickbare Element trägt data-act (+ data-arg), Formulare data-form,
+   Auswahlfelder data-change — drei Delegations-Listener rufen die Funktion auf.
+   Delegation statt Einzelbindung, damit auch dynamisch erzeugtes Markup
+   (2FA-Karte, Backup-Karte) ohne Extra-Schritt funktioniert. */
+const AKTIONEN = {
+  tab: el => tab(el.dataset.arg),
+  more: () => openMore(),
+  lang: () => toggleLang(),
+  theme: () => toggleTheme(),
+  tour: () => startTour(),
+  logout: () => logout(),
+  togglepw: el => togglePw(el.dataset.arg, el),
+  report: () => showReport(),
+  zoom: el => zoomBy(el.dataset.arg === 'in' ? 1.3 : 1 / 1.3),
+  fit: () => fitView(),
+  legend: () => $('legend').classList.toggle('collapsed'),
+  closeside: () => closeSide(),
+  explain: () => doExplain(),
+  clearpath: () => clearPath(),
+  startpath: () => startPath(),
+  runmapping: () => runMapping(),
+  picker: () => openPicker(),
+  history: () => loadHistory(),
+  copy: el => copyText($(el.dataset.arg).textContent, t(el.dataset.msg)),
+  qr: () => toggleQr(),
+  test: () => testConnect(),
+  client: el => pickClient(el.dataset.arg),
+  revokeall: () => revokeAllSessions(),
+  sessions: () => loadConnSessions(),
+  health: () => loadHealth(),
+  backup: () => runBackup(),
+  audit: () => loadAudit(),
+  hideerr: () => hideError(),
+  moretab: el => { $('moredlg').close(); tab(el.dataset.arg); },
+  moretour: () => { $('moredlg').close(); startTour(); },
+  closedlg: el => $(el.dataset.arg).close(),
+  pickok: () => pickCurrent(),
+  saveignore: () => saveIgnore(),
+  confirm: el => $('confirmdlg').close(el.dataset.arg),
+  tourend: () => endTour(),
+  tourstep: el => tourStep(+el.dataset.arg),
+  'twofa-setup': () => setup2fa(),
+  'twofa-copy': () => copyRecovery(),
+  'twofa-done': () => loadTwoFA(),
+  backupsetup: () => setupBackup(),
+  backupremove: () => removeBackupTarget(),
+  backupconfirmed: () => { loadBackup(); runBackup(); },
+};
+
+const FORMULARE = {
+  login: e => doLogin(e),
+  ask: e => sendAsk(e),
+  secret: e => addSecret(e),
+  apikey: e => saveApiKey(e),
+  mapping: e => saveMapping(e),
+  token: e => genToken(e),
+  'twofa-disable': e => disable2fa(e),
+  'twofa-enable': e => enable2fa(e),
+  password: e => changePassword(e),
+  backuptarget: e => saveBackupTarget(e),
+};
+
+const WECHSEL = {
+  loadgraph: () => loadGraph(),
+  maptoggle: el => toggleMapping(el.checked),
+  backend: () => backendChanged(),
+  model: () => modelChanged(),
+  gitsource: () => gitTokenSourceChanged(),
+};
+
+document.addEventListener('click', e => {
+  const el = e.target.closest('[data-act]');
+  if (!el) return;
+  const fn = AKTIONEN[el.dataset.act];
+  if (!fn) return;
+  if (el.tagName === 'A') e.preventDefault();   // Sprung-Links (#secrets) nicht ausführen
+  fn(el, e);
+});
+document.addEventListener('submit', e => {
+  const fn = e.target.dataset && FORMULARE[e.target.dataset.form];
+  if (fn) fn(e);                                 // die Handler rufen selbst preventDefault()
+});
+document.addEventListener('change', e => {
+  const el = e.target.closest('[data-change]');
+  const fn = el && WECHSEL[el.dataset.change];
+  if (fn) fn(el, e);
+});
+
+/* Sonderfälle mit Ereignissen jenseits von click/submit/change: direkt binden.
+   Das Skript lädt am Ende von <body>, die Elemente existieren also schon. */
+const suchfeld = $('search');
+suchfeld.addEventListener('input', () => searchChanged(suchfeld.value));
+suchfeld.addEventListener('keydown', e => searchKey(e));
+suchfeld.addEventListener('focus', () => searchChanged(suchfeld.value));
+suchfeld.addEventListener('blur', () => hideSearchDropSoon());
+const regler = $('limit');
+regler.addEventListener('input', () => {
+  $('limlbl').textContent = (+regler.value >= +regler.max) ? t('Alle') : regler.value;
+  limitChanged();
 });

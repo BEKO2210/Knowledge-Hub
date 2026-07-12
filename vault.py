@@ -57,6 +57,11 @@ HIDDEN_SECRETS = {"__2fa__"}
 # (der Name steckt dort im Pfad). Jetzt gilt sie für jeden Weg in den Vault.
 SECRET_NAME_RE = re.compile(r"^[\w.\- ]{1,64}$")
 
+# Wertgrenze ebenfalls hier, nicht in der Oberfläche: Der Vault wird bei jedem Zugriff
+# komplett entschlüsselt und neu geschrieben — ein einzelner Riesenwert (über MCP gab es
+# keine Grenze) macht JEDEN späteren Secret-Zugriff langsam, nicht nur den eigenen.
+SECRET_VALUE_MAX = 20_000
+
 _RLOCK = threading.RLock()
 
 _AAD = b"knowledge-mcp:vault:v1"  # v1-Daten (Migration)
@@ -413,11 +418,21 @@ def _save(store: dict[str, str]) -> None:
 
 
 def secret_set(name: str, value: str, client: str = "-") -> None:
+    # Abgelehnte Schreibversuche stehen im Audit-Log (SET-REJECT): Wer mit einem
+    # gestohlenen Token am Vault herumprobiert, hinterlässt eine Spur — nicht nur
+    # die Erfolge.
     if not SECRET_NAME_RE.match(name):
+        audit("SET-REJECT", f"{name} (Name unzulässig)", client)
         raise ValueError(
             "Ungültiger Name — erlaubt sind Buchstaben, Ziffern, Punkt, "
             "Bindestrich, Unterstrich und Leerzeichen (1–64 Zeichen)."
         )
+    if not value:
+        audit("SET-REJECT", f"{name} (leerer Wert)", client)
+        raise ValueError("Der Wert darf nicht leer sein.")
+    if len(value) > SECRET_VALUE_MAX:
+        audit("SET-REJECT", f"{name} (Wert {len(value)} Zeichen)", client)
+        raise ValueError(f"Wert ist zu lang (max. {SECRET_VALUE_MAX:,} Zeichen).".replace(",", "."))
     with _transaktion():
         store = _load()
         store[name] = value
