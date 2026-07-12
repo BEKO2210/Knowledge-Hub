@@ -6,6 +6,8 @@
    temporalen Todeszone (let/const) — die Seite bliebe weiß. */
 let LANG = 'de';
 const EN = {
+  'Der Hub hat die Anfrage abgelehnt.': 'The hub rejected the request.',
+  'Der Hub hat keine gültige Antwort geschickt. Steht die Verbindung noch?': 'The hub did not send a valid response. Is the connection still up?',
   'Umschalten fehlgeschlagen': 'Could not switch it',
   'Entfernen fehlgeschlagen': 'Could not remove it',
   'Zwei-Faktor lässt sich gerade nicht einrichten.': 'Two-factor cannot be set up right now.',
@@ -447,6 +449,27 @@ async function fehlerText(r, rueckfall) {
 async function zeigeFehler(r, rueckfall) {
   toast(await fehlerText(r, rueckfall), false);
 }
+
+/* JSON vom Hub holen — und laut scheitern, statt still zu hängen.
+   Vorher stand an 22 Stellen `await holeJson(x)`. Antwortet der Tunnel mit
+   einer HTML-Fehlerseite (502) oder einem leeren Body, wirft .json() eine Ausnahme.
+   Neun Stellen fingen sie gar nicht: Der Spinner drehte sich für immer. Die anderen
+   dreizehn fingen sie und gaben stumm auf — die Karte blieb einfach leer, ohne dass
+   der Nutzer je erfuhr, warum. Beides ist jetzt nicht mehr möglich. */
+async function holeJson(pfad, opts) {
+  const r = await api(pfad, opts);          // api() behandelt bereits 401/423/5xx
+  if (!r.ok) {
+    const msg = await fehlerText(r, t('Der Hub hat die Anfrage abgelehnt.'));
+    showError(msg);
+    throw new Error('http ' + r.status);
+  }
+  try {
+    return await r.json();
+  } catch (e) {
+    showError(t('Der Hub hat keine gültige Antwort geschickt. Steht die Verbindung noch?'));
+    throw e;
+  }
+}
 function toast(msg, ok = true) {
   const t = document.createElement('div');
   t.className = 'toast' + (ok ? '' : ' err');
@@ -613,7 +636,7 @@ let askProjectsLoaded = false;
 async function loadAsk() {
   if (!askProjectsLoaded) {
     try {
-      const list = await (await api('/ui/api/projects')).json();
+      const list = await holeJson('/ui/api/projects');
       $('askproj').innerHTML = list.map(p =>
         `<option value="${p.project}">${p.project}</option>`).join('');
       askProjectsLoaded = true;
@@ -776,7 +799,7 @@ function chosenModel() {
 
 async function loadMapping() {
   let s;
-  try { s = await (await api('/ui/api/mapping/status')).json(); }
+  try { s = await holeJson('/ui/api/mapping/status'); }
   catch { return; }
   BACKENDS = s.backends;
   $('maptoggle').checked = s.enabled;
@@ -799,7 +822,7 @@ async function loadMapping() {
        <div class="stat"><div class="v">${l.projects}${l.failed ? ` <span style="color:var(--red);font-size:.9rem">${t2('({n} Fehler)', {n: l.failed})}</span>` : ''}</div>
        <div class="k">${t('Projekte im letzten Lauf')}</div></div>` : '');
   try {
-    const log = await (await api('/ui/api/mapping/log')).json();
+    const log = await holeJson('/ui/api/mapping/log');
     $('maplog').textContent = log.lines.length ? log.lines.join('\n') : t('(noch kein Lauf protokolliert)');
     $('maplog').scrollTop = $('maplog').scrollHeight;
   } catch {}
@@ -826,7 +849,7 @@ function sparkline(values) {
 }
 async function loadHistory() {
   let h;
-  try { h = await (await api('/ui/api/mapping/history')).json(); } catch { return; }
+  try { h = await holeJson('/ui/api/mapping/history'); } catch { return; }
   const runs = h.runs || [];
   const spark = $('sparkwrap'), table = $('histtable');
   if (!runs.length) {
@@ -926,7 +949,7 @@ async function loadHistory() {
 }
 /* --- Projekte verwalten --- */
 async function loadProjectsCard() {
-  const items = await (await api('/ui/api/mapping/projects')).json();
+  const items = await holeJson('/ui/api/mapping/projects');
   const box = $('projlist');
   box.innerHTML = items.length ? '' :
     `<div class="empty"><svg class="ic" viewBox="0 0 24 24"><use href="#i-folder"/></svg><br>
@@ -1014,7 +1037,7 @@ async function repairProject(p, row) {
     body: JSON.stringify({path: p.path})});
   if (!r.ok) { await zeigeFehler(r, t('Start fehlgeschlagen')); btn.disabled = false; return; }
   const poll = setInterval(async () => {
-    const s = await (await api('/ui/api/mapping/repair?path=' + encodeURIComponent(p.path))).json();
+    const s = await holeJson('/ui/api/mapping/repair?path=' + encodeURIComponent(p.path));
     log.textContent = s.log || '';
     log.scrollTop = log.scrollHeight;
     if (s.status === 'done') {
@@ -1032,7 +1055,7 @@ async function repairProject(p, row) {
 
 let pickAt = null;
 async function browseTo(path) {
-  const d = await (await api('/ui/api/browse?path=' + encodeURIComponent(path || ''))).json();
+  const d = await holeJson('/ui/api/browse?path=' + encodeURIComponent(path || ''));
   pickAt = d.path;
   $('pickpath').textContent = d.path;
   const box = $('pickdirs');
@@ -1066,7 +1089,7 @@ async function pickCurrent() {
 let ignoreFor = null;
 async function openIgnore(p) {
   ignoreFor = p.path;
-  const d = await (await api('/ui/api/mapping/ignore?path=' + encodeURIComponent(p.path))).json();
+  const d = await holeJson('/ui/api/mapping/ignore?path=' + encodeURIComponent(p.path));
   $('ignoretext').value = d.content || '';
   if (!d.content) $('ignoretext').placeholder = t('z. B.\nnode_modules/\ndata/\n.env\n*.key');
   $('ignoredlg').showModal();
@@ -1217,7 +1240,7 @@ function fgResize() {
 window.addEventListener('resize', fgResize);
 
 async function loadProjects() {
-  const list = await (await api('/ui/api/projects')).json();
+  const list = await holeJson('/ui/api/projects');
   const sel = $('proj');
   sel.innerHTML = list.map(p =>
     `<option value="${p.project}">${p.project} · ${t2('{n} Knoten', {n: p.nodes})}</option>`).join('');
@@ -1236,7 +1259,7 @@ async function loadGraph() {
     const slider = $('limit');
     // Regler am Anschlag = ALLE Knoten (kein Deckel)
     const lim = +slider.value >= +slider.max ? 0 : slider.value;
-    const g = await (await api(`/ui/api/graph/${proj}?limit=${lim}`)).json();
+    const g = await holeJson(`/ui/api/graph/${proj}?limit=${lim}`);
     // Regler-Maximum an die echte Projektgröße anpassen
     const atMax = +slider.value >= +slider.max;
     slider.max = Math.max(2000, Math.ceil(g.total_nodes / 50) * 50);
@@ -1554,7 +1577,7 @@ function mdToHtml(md) {
   return html;
 }
 async function showReport() {
-  const j = await (await api(`/ui/api/report/${$('proj').value}`)).json();
+  const j = await holeJson(`/ui/api/report/${$('proj').value}`);
   $('reportout').innerHTML = mdToHtml(j.markdown);
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('on'));
   $('tab-report').classList.add('on');
@@ -1562,7 +1585,7 @@ async function showReport() {
 
 /* ================= secrets ================= */
 async function loadSecrets() {
-  const names = await (await api('/ui/api/secrets')).json();
+  const names = await holeJson('/ui/api/secrets');
   const box = $('slist');
   box.innerHTML = '';
   if (!names.length) {
@@ -1584,7 +1607,7 @@ async function loadSecrets() {
     row.querySelector('[data-a=show]').onclick = async (e) => {
       const btn = e.currentTarget;
       if (!val.classList.contains('on')) {
-        const j = await (await api('/ui/api/secrets/' + encodeURIComponent(n))).json();
+        const j = await holeJson('/ui/api/secrets/' + encodeURIComponent(n));
         val.textContent = j.value; val.classList.add('on');
         btn.innerHTML = '<svg class="ic" viewBox="0 0 24 24"><use href="#i-eyeoff"/></svg>';
         btn.setAttribute('aria-label', t('Wert verbergen'));
@@ -1595,7 +1618,7 @@ async function loadSecrets() {
       }
     };
     row.querySelector('[data-a=copy]').onclick = async () => {
-      const j = await (await api('/ui/api/secrets/' + encodeURIComponent(n))).json();
+      const j = await holeJson('/ui/api/secrets/' + encodeURIComponent(n));
       try { await navigator.clipboard.writeText(j.value); toast(t('In Zwischenablage kopiert')); }
       catch { toast(t('Kopieren nicht möglich'), false); }
     };
@@ -1664,7 +1687,7 @@ function sessionRow(s, refresh) {
 }
 async function loadConnSessions() {
   let d;
-  try { d = await (await api('/ui/api/sessions')).json(); } catch { return; }
+  try { d = await holeJson('/ui/api/sessions'); } catch { return; }
   const box = $('connsess');
   box.innerHTML = '';
   const others = d.sessions.filter(s => !s.current && s.revocable !== false).length;
@@ -1678,7 +1701,7 @@ async function loadConnSessions() {
 /* ================= verbinden (connect) ================= */
 let CONN = null, deviceToken = '', currentClient = 'webai';
 async function loadConnect() {
-  if (!CONN) { try { CONN = await (await api('/ui/api/connect/info')).json(); } catch { return; } }
+  if (!CONN) { try { CONN = await holeJson('/ui/api/connect/info'); } catch { return; } }
   $('mcpurl').textContent = CONN.mcp_url;
   $('qrimg').innerHTML = CONN.qr || '';
   renderClient(currentClient);
@@ -1823,7 +1846,7 @@ async function loadHealth() {
   const box = $('healthchecks');
   box.innerHTML = '<div style="display:flex;justify-content:center;padding:2rem"><div class="spinner" style="--sz:38px"></div></div>';
   let h;
-  try { h = await (await api('/ui/api/health')).json(); }
+  try { h = await holeJson('/ui/api/health'); }
   catch { box.innerHTML = `<div class="empty">${t('Diagnose nicht abrufbar.')}</div>`; return; }
 
   const bad = h.checks.filter(c => c.status !== 'ok').length;
@@ -1891,7 +1914,7 @@ async function loadHealth() {
 /* --- Zwei-Faktor-Authentifizierung --- */
 async function loadTwoFA() {
   let s;
-  try { s = await (await api('/ui/api/2fa')).json(); } catch { return; }
+  try { s = await holeJson('/ui/api/2fa'); } catch { return; }
   const box = $('twofabody');
   if (s.enabled) {
     box.innerHTML = `
@@ -1992,7 +2015,7 @@ async function disable2fa(e) {
 /* --- Vault-Sicherheit --- */
 async function loadVault() {
   let v;
-  try { v = await (await api('/ui/api/vault')).json(); } catch { return; }
+  try { v = await holeJson('/ui/api/vault'); } catch { return; }
   const box = $('vaultbody');
   box.innerHTML = `
     <div style="display:flex;align-items:flex-start;gap:var(--sp-3)">
@@ -2052,7 +2075,7 @@ async function changePassword(e) {
 let backupPoll = null;
 async function loadBackup() {
   let b;
-  try { b = await (await api('/ui/api/backup')).json(); } catch { return; }
+  try { b = await holeJson('/ui/api/backup'); } catch { return; }
   const box = $('backupbody');
   $('backupbtn').style.display = b.passphrase ? 'inline-flex' : 'none';
 
@@ -2160,7 +2183,7 @@ async function fillGitSecrets(selected) {
   const sel = $('gitsecret');
   if (!sel) return;
   let names = [];
-  try { names = await (await api('/ui/api/secrets')).json(); } catch { return; }
+  try { names = await holeJson('/ui/api/secrets'); } catch { return; }
   sel.innerHTML = `<option value="">${t('— neuen Token eingeben —')}</option>` +
     names.map(n => `<option value="${n}" ${n === selected ? 'selected' : ''}>${t2('aus dem Vault: {name}', {name: n})}</option>`).join('');
   gitTokenSourceChanged();
@@ -2208,7 +2231,7 @@ function badgeFor(action) {
   return 'b-list';
 }
 async function loadAudit() {
-  const lines = await (await api('/ui/api/audit')).json();
+  const lines = await holeJson('/ui/api/audit');
   const box = $('auditlist');
   box.innerHTML = '';
   if (!lines.length) {

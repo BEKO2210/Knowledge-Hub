@@ -330,3 +330,23 @@ def test_zweifaktor_knopf_bleibt_nach_fehler_bedienbar(seite):
     seite.wait_for_timeout(1500)
 
     assert seite.is_enabled("#start2fa"), "Der Knopf darf nach einem Fehler nicht tot bleiben"
+
+
+def test_kaputte_antwort_haengt_nicht_ewig(seite):
+    """Antwortet der Tunnel mit einer HTML-Fehlerseite statt JSON, darf die Oberfläche
+    nicht endlos im Ladezustand stehen bleiben — der Nutzer muss erfahren, was los ist."""
+    _anmelden(seite)
+
+    # Eine 502-HTML-Antwort simulieren, wie sie ein kaputter Tunnel liefert
+    seite.evaluate("""() => {
+        const echt = window.fetch;
+        window.fetch = (u, o) => String(u).includes('/ui/api/secrets')
+            ? Promise.resolve(new Response('<html><body>502 Bad Gateway</body></html>',
+                {status: 200, headers: {'Content-Type': 'text/html'}}))
+            : echt(u, o);
+    }""")
+    seite.evaluate("() => { loadSecrets().catch(() => {}); }")
+    seite.wait_for_selector("#errbanner.on", timeout=8000)
+
+    text = seite.inner_text("#errbanner")
+    assert "gültige Antwort" in text or "Verbindung" in text, text
