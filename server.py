@@ -20,6 +20,7 @@ import time
 from pathlib import Path
 
 from fastmcp import FastMCP
+from mcp.types import Icon
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
@@ -43,8 +44,21 @@ KNOWLEDGE_ROOT = config.path(os.environ.get("KNOWLEDGE_ROOT", CFG["paths"]["know
 GRAPHIFY_BIN = os.environ.get("GRAPHIFY_BIN", str(config.path(CFG["paths"]["graphify_bin"])))
 MCP_TOKEN = os.environ.get("MCP_TOKEN", "")
 
+# Icons für die Connector-Liste in Claude/ChatGPT. Ohne sie zeigt der Client nur einen
+# Platzhalter. Die URLs MÜSSEN ohne Anmeldung erreichbar sein — /ui/static/ ist genau
+# dafür in der BearerGate freigegeben; alles andere liefert 401 und der Client bekommt
+# nie ein Bild zu sehen.
+_PUBLIC = str(CFG["server"]["public_url"]).rstrip("/")
+_ICONS = [
+    Icon(src=f"{_PUBLIC}/ui/static/icon-192.png", mimeType="image/png", sizes=["192x192"]),
+    Icon(src=f"{_PUBLIC}/ui/static/icon-512.png", mimeType="image/png", sizes=["512x512"]),
+]
+
 mcp = FastMCP(
     "knowledge",
+    version=(Path(__file__).parent / "VERSION").read_text().strip(),
+    website_url=f"{_PUBLIC}/ui",
+    icons=_ICONS,
     instructions=(
         "Self-hosted knowledge hub. Knowledge graphs of your projects "
         "(query/explain/report) plus an encrypted secrets vault. Secrets are sensitive: "
@@ -341,6 +355,13 @@ class BearerGate:
         path = scope.get("path", "")
         if path.startswith("/.well-known/") or path.startswith("/oauth/"):
             await oauth.oauth_app(scope, receive, send)
+            return
+        # Das Favicon an der Wurzel: Connector-Listen (ChatGPT, Browser-Tabs) fragen es
+        # zuerst ab. Hinter der Schranke lieferte es 401 — der Client bekam nie ein Bild
+        # und zeigte einen Platzhalter. Ein Icon ist kein Geheimnis.
+        if path in ("/favicon.ico", "/favicon.png", "/apple-touch-icon.png",
+                    "/apple-touch-icon-precomposed.png"):
+            await ui.ui_app(scope, receive, send)
             return
         headers = dict(scope.get("headers") or [])
         auth = headers.get(b"authorization", b"").decode()

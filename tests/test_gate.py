@@ -127,3 +127,28 @@ def test_bereichsnamen_werden_ausgeliefert(client, auth, fresh_vault, tmp_path, 
     assert r.status_code == 200
     knoten = r.json()["nodes"]
     assert all(n["community_name"] == "Auth and Sessions" for n in knoten)
+
+
+def test_icons_sind_ohne_anmeldung_erreichbar(client):
+    """Ein Icon ist kein Geheimnis — und hinter der Schranke bekommt es kein Client zu sehen.
+
+    Claude und ChatGPT holen das Icon für ihre Connector-Liste, BEVOR ein Token existiert.
+    Lieferte der Hub dort 401, blieb in der Liste für immer ein grauer Platzhalter.
+    """
+    for pfad in ("/favicon.ico", "/favicon.png", "/apple-touch-icon.png"):
+        r = client.get(pfad)
+        assert r.status_code == 200, f"{pfad} lieferte {r.status_code} — kein Client sieht das Icon"
+        assert r.headers["content-type"].startswith("image/"), pfad
+        assert len(r.content) > 500, f"{pfad} ist verdächtig leer"
+
+
+def test_mcp_serverinfo_traegt_icon_und_adresse():
+    """Das Icon muss im MCP-Handshake stehen — daraus baut der Client die Connector-Kachel."""
+    import server
+
+    icons = server._ICONS
+    assert icons, "Ohne icons zeigt der Client nur einen Platzhalter"
+    assert all(i.src.startswith("http") for i in icons), "Die Icon-URL muss absolut sein"
+    assert all("/ui/static/" in i.src for i in icons), \
+        "Das Icon muss unter einem Pfad liegen, der ohne Anmeldung erreichbar ist"
+    assert server.mcp.website_url

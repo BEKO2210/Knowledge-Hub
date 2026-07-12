@@ -139,6 +139,24 @@ async def static_file(request: Request):
     )
 
 
+async def root_icon(request: Request):
+    """Favicon an der Domain-Wurzel — für Browser-Tabs und die Connector-Liste der KI-Clients.
+
+    Die großen Icons sind PNG; .ico wird von allen aktuellen Clients als PNG akzeptiert.
+    """
+    from starlette.responses import Response
+
+    gross = request.url.path.startswith("/apple-touch-icon")
+    datei = STATIC_DIR / ("icon-192.png" if gross else "favicon.png")
+    if not datei.is_file():
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return Response(
+        datei.read_bytes(),
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
 async def manifest(request: Request) -> JSONResponse:
     return JSONResponse(
         {
@@ -281,6 +299,11 @@ ui_app = Starlette(middleware=[Middleware(Sprache), Middleware(SecurityHeaders),
     Route("/ui/setup/status", setup_wizard.setup_status),
     Route("/ui/setup/submit", setup_wizard.setup_submit, methods=["POST"]),
     Route("/ui/setup/restart", setup_wizard.setup_restart, methods=["POST"]),
+    # Wurzel-Icons: Clients fragen sie ohne /ui-Präfix ab (Browser-Tab, Connector-Liste).
+    Route("/favicon.ico", root_icon),
+    Route("/favicon.png", root_icon),
+    Route("/apple-touch-icon.png", root_icon),
+    Route("/apple-touch-icon-precomposed.png", root_icon),
     Route("/ui/static/{name}", static_file),
     Route("/ui/asset/{name}", web_asset),
     Route("/ui/manifest.json", manifest),
