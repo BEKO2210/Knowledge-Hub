@@ -6,6 +6,8 @@
    temporalen Todeszone (let/const) — die Seite bliebe weiß. */
 let LANG = 'de';
 const EN = {
+  'Adresse kopiert': 'Address copied',
+  'Token kopiert': 'Token copied',
   /* Fehler im Mapping-Verlauf */
   'Sicherung fehlgeschlagen': 'Backup failed',
   'erledigt': 'resolved',
@@ -1618,7 +1620,7 @@ function copyText(text, msg) {
 function toggleQr() { const b = $('qrbox'); b.style.display = b.style.display === 'none' ? 'block' : 'none'; }
 async function genToken(e) {
   e.preventDefault();
-  const label = $('tokenlabel').value.trim() || 'MCP-Client';
+  const label = $('tokenlabel').value.trim() || 'MCP client';
   $('genbtn').disabled = true;
   try {
     const r = await api('/ui/api/connect/token', {method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -1729,9 +1731,11 @@ async function addSecret(e) {
 
 /* ================= diagnose ================= */
 const HSTYLE = {
-  ok:   {col: 'var(--acc)',   bg: 'rgba(34,197,94,.10)',  icon: 'i-check', label: 'in Ordnung'},
-  warn: {col: 'var(--amber)', bg: 'rgba(251,191,36,.10)', icon: 'i-alert', label: 'Hinweis'},
-  err:  {col: 'var(--red)',   bg: 'rgba(248,113,113,.10)',icon: 'i-alert', label: 'Problem'},
+  /* Kein label-Feld: Es wurde nirgends gelesen und hätte nur deutschen Text
+     am Leben gehalten, den keine Übersetzung je erreicht. */
+  ok:   {col: 'var(--acc)',   bg: 'rgba(34,197,94,.10)',  icon: 'i-check'},
+  warn: {col: 'var(--amber)', bg: 'rgba(251,191,36,.10)', icon: 'i-alert'},
+  err:  {col: 'var(--red)',   bg: 'rgba(248,113,113,.10)',icon: 'i-alert'},
 };
 async function loadHealth() {
   const box = $('healthchecks');

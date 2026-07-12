@@ -114,12 +114,18 @@ def validate_access_token(token: str, user_agent: str = "") -> bool:
 
 
 def _device_label(entry: dict, clients: dict) -> str:
-    """Sprechender Name für ein Gerät/Programm."""
+    """Sprechender Name für ein Gerät/Programm.
+
+    Wird bei jedem Abruf neu gebildet (nicht gespeichert) — darum darf und muss er
+    in der Sprache des Aufrufers erscheinen.
+    """
+    from api.i18n import T
+
     cid = entry.get("client_id", "")
     if cid == "web-ui":
-        return "Weboberfläche"
+        return T("Weboberfläche")
     name = clients.get(cid, {}).get("name") or ""
-    return name or f"Unbekannter Client ({cid[:8]})"
+    return name or T("Unbekannter Client ({cid})", cid=cid[:8])
 
 
 def list_sessions() -> list[dict]:

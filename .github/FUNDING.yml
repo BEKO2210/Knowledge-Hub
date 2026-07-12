@@ -1,0 +1,4 @@
+# Blendet den "Sponsor"-Knopf im Repo ein.
+# Voraussetzung: Das GitHub-Konto muss bei GitHub Sponsors freigeschaltet sein
+# (github.com/sponsors/accounts). Ohne Freischaltung bleibt der Knopf unsichtbar.
+github: [BEKO2210]

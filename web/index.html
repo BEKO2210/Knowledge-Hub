@@ -112,7 +112,7 @@
       </div>
       <div id="limitwrap"><span id="limlbl">2000</span>
         <input type="range" id="limit" min="100" max="2000" step="50" value="2000" aria-label="Anzahl Knoten" data-en-title="Number of nodes"
-               oninput="limlbl.textContent=(+this.value>=+this.max)?'Alle':this.value;limitChanged()">
+               oninput="limlbl.textContent=(+this.value>=+this.max)?t('Alle'):this.value;limitChanged()">
       </div>
       <button class="btn ghost icon" onclick="showReport()" aria-label="Report anzeigen" data-en-title="Show report"><svg class="ic" viewBox="0 0 24 24"><use href="#i-doc"/></svg></button>
       <span id="stats"></span>
@@ -362,7 +362,7 @@
       <div class="card" style="margin-bottom:var(--sp-3)">
         <label style="font-size:.8rem;color:var(--mut);display:block;margin-bottom:6px" data-en="Your MCP address">Deine MCP-Adresse</label>
         <div class="copyrow"><span class="mono" id="mcpurl" style="flex:1;min-width:0;overflow-wrap:anywhere"></span>
-          <button class="btn ghost icon" onclick="copyText($('mcpurl').textContent,'Adresse kopiert')" aria-label="Adresse kopieren" data-en-title="Copy address"><svg class="ic" viewBox="0 0 24 24"><use href="#i-copy"/></svg></button></div>
+          <button class="btn ghost icon" onclick="copyText($('mcpurl').textContent,t('Adresse kopiert'))" aria-label="Adresse kopieren" data-en-title="Copy address"><svg class="ic" viewBox="0 0 24 24"><use href="#i-copy"/></svg></button></div>
         <div style="display:flex;gap:var(--sp-2);flex-wrap:wrap;margin-top:var(--sp-3)">
           <button class="btn ghost" style="min-height:40px;font-size:var(--fs-sm)" onclick="toggleQr()"><svg class="ic" viewBox="0 0 24 24"><use href="#i-qr"/></svg><span data-en="QR for phone">QR fürs Handy</span></button>
           <button class="btn ghost" style="min-height:40px;font-size:var(--fs-sm)" id="testbtn" onclick="testConnect()"><svg class="ic" viewBox="0 0 24 24"><use href="#i-pulse"/></svg><span data-en="Test connection">Verbindung testen</span></button>
@@ -392,7 +392,7 @@
           <div class="warn" style="margin-bottom:8px"><svg class="ic" viewBox="0 0 24 24"><use href="#i-alert"/></svg>
             <div><span data-en="This token is shown ">Dieses Token wird </span><b data-en="only once">nur jetzt</b><span data-en=" — copy it now and paste it into your setup instructions below."> angezeigt. Kopiere es und füge es unten in deine Anleitung ein.</span></div></div>
           <div class="copyrow"><span class="mono" id="tokenval" style="flex:1;min-width:0;overflow-wrap:anywhere;color:var(--acc)"></span>
-            <button class="btn ghost icon" onclick="copyText($('tokenval').textContent,'Token kopiert')" aria-label="Token kopieren" data-en-title="Copy token"><svg class="ic" viewBox="0 0 24 24"><use href="#i-copy"/></svg></button></div>
+            <button class="btn ghost icon" onclick="copyText($('tokenval').textContent,t('Token kopiert'))" aria-label="Token kopieren" data-en-title="Copy token"><svg class="ic" viewBox="0 0 24 24"><use href="#i-copy"/></svg></button></div>
         </div>
       </div>
 

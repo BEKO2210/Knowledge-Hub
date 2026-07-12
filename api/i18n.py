@@ -39,6 +39,9 @@ def T(de: str, **werte: object) -> str:
 # inklusive Platzhaltern, Geviertstrich und typografischen Anführungszeichen.
 # ---------------------------------------------------------------------------
 DE_EN: dict[str, str] = {
+    # --- oauth.py: Geräte-/Client-Namen ---
+    "Weboberfläche": "Web interface",
+    "Unbekannter Client ({cid})": "Unknown client ({cid})",
     "Kein Lauf angegeben.": "No run specified.",
     # --- ui.py: globale Fehlerbehandlung ---
     "Im Hub ist etwas schiefgelaufen. Der Vorfall wurde protokolliert.":

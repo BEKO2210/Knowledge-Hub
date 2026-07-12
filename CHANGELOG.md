@@ -6,6 +6,35 @@ Alle nennenswerten Änderungen an diesem Projekt. Format angelehnt an
 
 ## [Unveröffentlicht]
 
+### Hinzugefügt
+- **Übersetzung vollständig.** Ein Prüf-Skript ruft die Oberfläche auf Englisch auf und sucht
+  jeden sichtbaren deutschen Text — Ergebnis: **null**. Die letzten Lücken saßen an Stellen, die
+  keine Übersetzung je erreicht hätte: deutsche Literale in `oninput`/`onclick`-Attributen im
+  Markup („Alle", „Adresse kopiert", „Token kopiert") und der Gerätename „Weboberfläche", der in
+  `oauth.py` entsteht. Dazu **10 neue Tests** als Wachhund: Sie öffnen jeden Reiter auf Englisch
+  und lassen die Suite platzen, sobald wieder deutscher Text hineinrutscht — sonst merkt das
+  niemand, weil man selbst deutsch liest.
+- Sponsor-Knopf (`FUNDING.yml`), Social-Preview-Karte, Issues/Projects/Discussions/Wiki aktiviert.
+
+### Behoben
+- **Der Fehlerzähler im Mapping-Verlauf log.** Er zählte jede Zeile mit „FEHLGESCHLAGEN" als
+  Projektfehler — auch die gescheiterte *Sicherung*, die keinen Projektnamen trägt. Ergebnis war
+  ein namenloser Fehler „?", gegen den man nichts tun konnte. Jetzt werden Projekt-, Sync- und
+  Sicherungsfehler getrennt, jeder erklärt in einem Satz, was kaputt ist, und bietet den passenden
+  Knopf an (Reparieren bzw. Zur Sicherung). Erledigte Läufe lassen sich abhaken — der Eintrag
+  bleibt stehen, er mahnt nur nicht mehr.
+- **Die Tests hingen an der Entwicklermaschine** — an der echten `env`-Datei im Home-Verzeichnis
+  und an der Systemsprache. Auf einer frischen Maschine (CI) zeigte der Hub darum den
+  Erststart-Assistenten, und drei Tests suchten deutsche Texte in einer englischen Oberfläche.
+  Beides von CI aufgedeckt, beides behoben.
+
+### Bekannt
+- **Kein Coverage/Codecov.** `coverage` bricht beim Messen mit einem Zirkelimport ab: Der
+  Import-Hook von `beartype` (kommt über `key_value.aio` aus `fastmcp`) umschließt den Loader von
+  `coverage` und ruft sich dabei selbst auf. Mit beartype 0.21 und 0.22 geprüft — beide betroffen.
+  Es ist kein Fehler dieses Projekts; sobald er behoben ist, genügen `pytest-cov` und ein
+  Upload-Schritt.
+
 ## [0.5.0] — 2026-07-11 — Erste öffentliche Fassung
 
 ### Hinzugefügt

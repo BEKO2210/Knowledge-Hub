@@ -16,3 +16,10 @@ ignore = [
 "tests/*" = ["E402", "SIM117"]
 # conftest MUSS die Umgebung vor den Importen setzen.
 "tests/conftest.py" = ["E402"]
+
+
+# Coverage/Codecov ist bewusst NICHT eingebunden.
+# coverage bricht mit einem Zirkelimport ab, sobald es misst: Der Import-Hook von
+# beartype (kommt über key_value.aio aus fastmcp) umschließt den Loader von coverage
+# und ruft sich dabei selbst auf. Getestet mit beartype 0.21 und 0.22 — beide betroffen.
+# Sobald das behoben ist, reichen pytest-cov + ein Upload-Schritt in ci.yml.
