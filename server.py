@@ -155,26 +155,51 @@ def _resolve_project_dir(project: str) -> Path:
 
 
 def _build_worker(name: str, path: Path) -> None:
-    BUILD_LOG_DIR.mkdir(exist_ok=True)
-    log_file = BUILD_LOG_DIR / f"{name}.log"
-    steps = [[GRAPHIFY_BIN, "update", str(path)], [GRAPHIFY_SYNC, str(path)]]
-    with log_file.open("w") as log:
-        for cmd in steps:
-            log.write(f"$ {shlex.join(cmd)}\n")
-            log.flush()
-            proc = subprocess.run(  # noqa: S603 - fixed binaries, validated path
-                cmd,
-                stdout=log,
-                stderr=subprocess.STDOUT,
-                text=True,
-                timeout=1800,
-            )
-            if proc.returncode != 0:
-                with _builds_lock:
-                    _builds[name].update(status="failed", finished=int(time.time()))
-                return
-    with _builds_lock:
-        _builds[name].update(status="done", finished=int(time.time()))
+    """Ein Mapping-Lauf im Hintergrund.
+
+    Der ganze Rumpf steht unter try/except/finally, und das ist der Punkt: Vorher fiel
+    dieser Thread bei jedem unerwarteten Fehler still um — ein fehlendes graphify-sync,
+    eine Zeitüberschreitung, eine volle Platte. Der Status blieb dann für immer auf
+    „running“, und graph_build weigerte sich ab da, dieses Projekt je wieder zu bauen
+    („build is already running“). Nur ein Serverneustart holte es zurück.
+
+    Jetzt endet JEDER Weg aus dieser Funktion in einem Endzustand (done/failed), und der
+    Grund steht im Log, das der Nutzer über graph_build_status sieht.
+    """
+    ende, grund = "failed", ""
+    try:
+        BUILD_LOG_DIR.mkdir(exist_ok=True)
+        log_file = BUILD_LOG_DIR / f"{name}.log"
+        steps = [[GRAPHIFY_BIN, "update", str(path)], [GRAPHIFY_SYNC, str(path)]]
+        with log_file.open("w") as log:
+            for cmd in steps:
+                log.write(f"$ {shlex.join(cmd)}\n")
+                log.flush()
+                try:
+                    proc = subprocess.run(  # noqa: S603 - fixed binaries, validated path
+                        cmd,
+                        stdout=log,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        timeout=1800,
+                    )
+                except subprocess.TimeoutExpired:
+                    grund = f"Zeitüberschreitung nach 30 Minuten: {shlex.join(cmd)}"
+                    log.write(f"\n!! {grund}\n")
+                    return
+                except OSError as e:  # Binary fehlt, keine Rechte, Platte voll
+                    grund = f"{cmd[0]} konnte nicht ausgeführt werden: {e}"
+                    log.write(f"\n!! {grund}\n")
+                    return
+                if proc.returncode != 0:
+                    grund = f"{shlex.join(cmd)} endete mit Code {proc.returncode}"
+                    return
+        ende = "done"
+    except Exception as e:  # noqa: BLE001 - ein toter Thread darf den Status nicht einfrieren
+        grund = f"Unerwarteter Fehler: {type(e).__name__}: {e}"
+    finally:
+        with _builds_lock:
+            _builds[name].update(status=ende, finished=int(time.time()), error=grund or None)
 
 
 @mcp.tool

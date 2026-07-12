@@ -399,6 +399,11 @@ async function api(path, opts = {}) {
   try {
     r = await fetch(path, opts);
   } catch (e) {
+    /* Ein ABGEBROCHENER Aufruf ist kein Fehler: Der Browser bricht laufende Anfragen ab,
+       wenn der Nutzer die Seite verlässt oder neu lädt — und wir brechen selbst ab, wenn
+       eine Anfrage veraltet ist. Ohne diese Zeile sah der Nutzer dann fälschlich
+       „Keine Verbindung zum Hub", obwohl gar nichts kaputt war. */
+    if (e.name === 'AbortError') throw e;
     // Kein Netz, Server weg, Tunnel unterbrochen — der häufigste Fall im Alltag.
     showError(t('Keine Verbindung zum Hub. Prüfe deine Internetverbindung.'));
     throw e;
@@ -2288,6 +2293,8 @@ window.addEventListener('error', e => {
 });
 window.addEventListener('unhandledrejection', e => {
   const m = String(e.reason && e.reason.message || e.reason || '');
+  // Ein Abbruch ist kein Fehler (Seitenwechsel, veraltete Anfrage) — kein Banner dafür.
+  if (e.reason && e.reason.name === 'AbortError') return;
   // Diese drei behandeln wir bereits gezielt — kein doppeltes Banner.
   if (/unauthorized|locked|server error/.test(m)) return;
   if (m) showError(t2('Ein Fehler in der Oberfläche: {msg}', {msg: m}));
