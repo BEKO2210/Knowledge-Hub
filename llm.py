@@ -12,6 +12,7 @@ Zwei API-Formen:
 from __future__ import annotations
 
 import json
+import re
 import urllib.error
 import urllib.request
 
@@ -22,30 +23,52 @@ class LLMError(RuntimeError):
     pass
 
 
-def _call_openai(base_url: str, key: str, model: str, system: str, user: str) -> str:
-    body = json.dumps(
+# Die neueren OpenAI-Modelle (gpt-5-Familie, o1/o3/o4) lehnen `max_tokens` ab und
+# verlangen `max_completion_tokens`. Die älteren kennen den neuen Namen nicht.
+# Genau daran waren „Erklären lassen" und der Fragen-Tab tot, sobald das Modell auf
+# gpt-5 stand: 400 „Unsupported parameter: 'max_tokens'".
+_NEUES_LIMIT = re.compile(r"^(gpt-5|o[1-9])", re.I)
+
+
+def _openai_body(model: str, system: str, user: str, limit_key: str) -> bytes:
+    return json.dumps(
         {
             "model": model,
             "messages": [
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ],
-            "max_tokens": 900,
+            limit_key: 900,
         }
     ).encode()
-    req = urllib.request.Request(
-        base_url.rstrip("/") + "/chat/completions",
-        data=body,
-        headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}"},
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
-            data = json.load(r)
-    except urllib.error.HTTPError as e:
-        detail = e.read().decode(errors="replace")[:300]
-        raise LLMError(f"Anbieter antwortete {e.code}: {detail}") from e
-    except OSError as e:
-        raise LLMError(f"Anbieter nicht erreichbar: {e}") from e
+
+
+def _call_openai(base_url: str, key: str, model: str, system: str, user: str) -> str:
+    url = base_url.rstrip("/") + "/chat/completions"
+    kopf = {"Content-Type": "application/json", "Authorization": f"Bearer {key}"}
+    # Passenden Namen raten — und wenn der Anbieter widerspricht, den anderen nehmen.
+    # Ein neues Modell soll nicht wieder alles lahmlegen, nur weil die Liste veraltet.
+    erst = "max_completion_tokens" if _NEUES_LIMIT.match(model.strip()) else "max_tokens"
+    dann = "max_tokens" if erst == "max_completion_tokens" else "max_completion_tokens"
+
+    for versuch, limit_key in enumerate((erst, dann)):
+        req = urllib.request.Request(url, data=_openai_body(model, system, user, limit_key),
+                                     headers=kopf)
+        try:
+            with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+                data = json.load(r)
+            break
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode(errors="replace")[:300]
+            # Genau dieser Fehler ist heilbar: der Anbieter will den anderen Namen.
+            heilbar = (e.code == 400 and versuch == 0
+                       and "max_tokens" in detail and "unsupported" in detail.lower())
+            if heilbar:
+                continue
+            raise LLMError(f"Anbieter antwortete {e.code}: {detail}") from e
+        except OSError as e:
+            raise LLMError(f"Anbieter nicht erreichbar: {e}") from e
+
     try:
         return data["choices"][0]["message"]["content"].strip()
     except (KeyError, IndexError) as e:

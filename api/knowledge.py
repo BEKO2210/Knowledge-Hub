@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import re
 import subprocess
+import time
+from pathlib import Path
 
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 import config
 import vault
-from api.common import GRAPHIFY_BIN, KNOWLEDGE_ROOT, _projects
+from api.common import DATA_DIR, GRAPHIFY_BIN, KNOWLEDGE_ROOT, _projects
 from api.i18n import T
 
 
@@ -82,6 +85,86 @@ async def report(request: Request) -> JSONResponse:
     )
 
 
+# ---------------------------------------------------------------------------
+# Antwort-Speicher
+# ---------------------------------------------------------------------------
+# Jede Erklärung und jede Frage kostet Geld und Wartezeit. Bisher war beides nach
+# dem Schließen des Panels weg — dieselbe Frage zweimal gestellt hieß: zweimal
+# bezahlt. Antworten werden darum gespeichert und wiederverwendet.
+#
+# Der Schlüssel enthält den Stand des Graphen (mtime): Wird ein Projekt neu gemappt,
+# sind die alten Antworten ungültig und verfallen von selbst — eine veraltete
+# Erklärung wäre schlimmer als gar keine.
+#
+# Zusätzlich wandert jede Antwort in graphify-out/memory/ (`graphify save-result`).
+# Das ist der Rückkanal, aus dem `graphify reflect` lernt, welche Wege getragen haben.
+ANTWORT_DIR = DATA_DIR / "answers"
+
+
+def _graph_stand(projekt: str) -> str:
+    g = KNOWLEDGE_ROOT / projekt / "graphify-out" / "graph.json"
+    return str(int(g.stat().st_mtime)) if g.exists() else "0"
+
+
+def _speicher_pfad(projekt: str, art: str, frage: str, modell: str) -> Path:
+    roh = f"{art}|{projekt}|{_graph_stand(projekt)}|{modell}|{frage}"
+    h = hashlib.sha256(roh.encode()).hexdigest()[:16]
+    return ANTWORT_DIR / projekt / f"{art}-{h}.json"
+
+
+def _antwort_lesen(projekt: str, art: str, frage: str, modell: str) -> dict | None:
+    f = _speicher_pfad(projekt, art, frage, modell)
+    try:
+        return json.loads(f.read_text())
+    except Exception:  # noqa: BLE001 - fehlend oder kaputt = kein Treffer
+        return None
+
+
+def _antwort_schreiben(projekt: str, art: str, frage: str, modell: str, daten: dict) -> None:
+    f = _speicher_pfad(projekt, art, frage, modell)
+    try:
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps({**daten, "gespeichert": int(time.time()), "frage": frage}))
+    except Exception:  # noqa: BLE001 - ein kaputter Speicher darf die Antwort nicht kosten
+        pass
+
+
+def _ins_graph_gedaechtnis(projekt: str, art: str, frage: str, antwort: str) -> None:
+    """Antwort in graphify-out/memory/ ablegen — der Rückkanal für `graphify reflect`."""
+    try:
+        subprocess.run(  # noqa: S603 - fester Binary, geprüftes Projekt
+            [GRAPHIFY_BIN, "save-result", "--question", frage[:500],
+             "--answer", antwort[:4000], "--type", art],
+            cwd=KNOWLEDGE_ROOT / projekt, capture_output=True, timeout=20, check=False,
+        )
+    except Exception:  # noqa: BLE001 - reine Zugabe, darf nie die Antwort verhindern
+        pass
+
+
+async def antworten_liste(request: Request) -> JSONResponse:
+    """Die gespeicherten Erklärungen und Antworten eines Projekts (neueste zuerst)."""
+    name = request.path_params["project"]
+    if name not in _projects():
+        return JSONResponse({"error": T("Unbekanntes Projekt")}, status_code=404)
+    ordner = ANTWORT_DIR / name
+    out = []
+    if ordner.is_dir():
+        for f in ordner.glob("*.json"):
+            try:
+                d = json.loads(f.read_text())
+            except Exception:  # noqa: BLE001
+                continue
+            out.append({
+                "art": "explain" if f.name.startswith("explain") else "query",
+                "frage": d.get("frage", ""),
+                "text": (d.get("text") or d.get("answer") or "")[:400],
+                "modell": d.get("model", ""),
+                "gespeichert": d.get("gespeichert"),
+            })
+    out.sort(key=lambda x: x.get("gespeichert") or 0, reverse=True)
+    return JSONResponse({"items": out[:100]})
+
+
 async def explain(request: Request) -> JSONResponse:
     """Knoten erklären: Graph-Nachbarschaft holen und von der KI in verständliche
     Sprache übersetzen — mit demselben Anbieter/Key wie das Mapping."""
@@ -120,6 +203,12 @@ async def explain(request: Request) -> JSONResponse:
                           backend=backend.get("label", backend_name)),
             }
         )
+    # Schon einmal erklärt? Dann nicht noch einmal bezahlen.
+    if not request.query_params.get("fresh"):
+        alt = _antwort_lesen(name, "explain", node, model)
+        if alt:
+            return JSONResponse({**alt, "source": "gespeichert", "context": context})
+
     try:
         answer = await asyncio.to_thread(
             llm.ask,
@@ -134,10 +223,11 @@ async def explain(request: Request) -> JSONResponse:
             {"text": context, "source": "graph", "note": T("KI nicht verfügbar: {msg}", msg=e)}
         )
     vault.audit("EXPLAIN", f"{name}/{node}", client="web-ui")
-    return JSONResponse(
-        {"text": answer, "source": "llm", "model": model, "backend": backend.get("label", backend_name),
-         "context": context}
-    )
+    ergebnis = {"text": answer, "source": "llm", "model": model,
+                "backend": backend.get("label", backend_name)}
+    _antwort_schreiben(name, "explain", node, model, ergebnis)
+    await asyncio.to_thread(_ins_graph_gedaechtnis, name, "explain", node, answer)
+    return JSONResponse({**ergebnis, "context": context})
 
 
 # Interne Secrets (2FA-Zustand u. Ä.) tauchen nicht in der Secrets-Verwaltung auf —
@@ -222,6 +312,12 @@ async def graph_ask(request: Request) -> JSONResponse:
                         "Graphen. Für eine formulierte Antwort einen Key im Mapping-Tab eintragen."),
             "source": "graph", "sources": sources,
         })
+    # Dieselbe Frage schon einmal beantwortet? Antwort aus dem Speicher.
+    if not str(body.get("fresh", "")):
+        alt = _antwort_lesen(name, "query", question, model)
+        if alt:
+            return JSONResponse({**alt, "source": "gespeichert", "sources": sources})
+
     try:
         answer = await asyncio.to_thread(
             llm.ask, backend, model, key or "",
@@ -231,8 +327,8 @@ async def graph_ask(request: Request) -> JSONResponse:
         return JSONResponse({"answer": T("KI nicht verfügbar: {msg}", msg=e),
                              "source": "graph", "sources": sources})
     vault.audit("QUERY", f"{name}: {question[:60]}", client="web-ui")
-    return JSONResponse({
-        "answer": answer, "source": "llm",
-        "model": model, "backend": backend.get("label", backend_name),
-        "sources": sources,
-    })
+    ergebnis = {"answer": answer, "source": "llm", "model": model,
+                "backend": backend.get("label", backend_name)}
+    _antwort_schreiben(name, "query", question, model, ergebnis)
+    await asyncio.to_thread(_ins_graph_gedaechtnis, name, "query", question, answer)
+    return JSONResponse({**ergebnis, "sources": sources})

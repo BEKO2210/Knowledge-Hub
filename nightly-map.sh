@@ -81,6 +81,16 @@ for p in "${PROJECTS[@]}"; do
   "$GRAPHIFY" extract "$p" \
     --backend "$BACKEND" --model "$MODEL" --api-timeout "$API_TIMEOUT" "${EXTRA_ARGS[@]}" \
     || { echo "extract FEHLGESCHLAGEN: $p"; continue; }
+
+  # Bereiche benennen. OHNE diesen Schritt heißen alle neuen Bereiche in der Oberfläche
+  # nur „Bereich 0, 1, 2…" — extract clustert zwar, vergibt aber keine Namen. Die
+  # Benennung zerfiel dadurch bei jedem Nachtlauf wieder, sobald sich ein Projekt änderte.
+  # --missing-only lässt bestehende Namen in Ruhe und benennt nur die neuen: kostet fast nichts.
+  if [ ${#EXTRA_ARGS[@]} -eq 0 ]; then      # nur mit KI-Key sinnvoll (sonst --code-only)
+    "$GRAPHIFY" label "$p" --missing-only --backend "$BACKEND" --model "$MODEL" \
+      || echo "label fehlgeschlagen: $p (Bereiche bleiben unbenannt)"
+  fi
+
   "$GRAPHIFY_SYNC" "$p" || echo "sync fehlgeschlagen: $p"
 done
 

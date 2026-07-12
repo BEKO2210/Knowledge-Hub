@@ -220,3 +220,44 @@ def test_browsersprache_bestimmt_die_startsprache(browser, hub, fresh_vault, loc
     page.wait_for_timeout(400)
     assert page.evaluate("LANG") == erwartet
     ctx.close()
+
+
+def test_ungueltiger_secret_name_erklaert_sich(seite):
+    """Der Fehler, der den Nutzer blockiert hat.
+
+    Ein Secret-Name mit „@" wird vom Server abgelehnt — mit einer präzisen Begründung.
+    Die Oberfläche warf sie weg und zeigte nur „Fehler beim Speichern". Der Nutzer stand
+    ratlos da und dachte, das Speichern sei kaputt. Jetzt muss dastehen, WAS erlaubt ist.
+    """
+    _anmelden(seite)
+    seite.evaluate("tab('secrets')")
+    seite.wait_for_timeout(600)
+
+    seite.fill("#sname", "api@key")
+    seite.fill("#svalue", "geheim")
+    seite.click("#addbtn")
+    seite.wait_for_timeout(1500)
+
+    meldung = seite.inner_text("#secerr")
+    assert meldung.strip(), "Es muss eine Meldung im Formular stehen — nicht nur ein flüchtiger Toast"
+    # Sie muss ERKLÄREN, nicht bloß melden.
+    assert "Fehler beim Speichern" not in meldung
+    assert any(w in meldung.lower() for w in ("erlaubt", "allowed", "zeichen", "characters")), meldung
+
+    # Und das Secret darf natürlich nicht angelegt worden sein
+    assert "api@key" not in seite.inner_text("#slist")
+
+
+def test_gueltiger_secret_name_klappt_weiterhin(seite):
+    """Die Gegenprobe: Die neue Fehlerzeile darf den guten Weg nicht stören."""
+    _anmelden(seite)
+    seite.evaluate("tab('secrets')")
+    seite.wait_for_timeout(600)
+
+    seite.fill("#sname", "OPENAI_API_KEY")
+    seite.fill("#svalue", "sk-egal")
+    seite.click("#addbtn")
+    seite.wait_for_timeout(1500)
+
+    assert "OPENAI_API_KEY" in seite.inner_text("#slist")
+    assert not seite.inner_text("#secerr").strip(), "Nach Erfolg muss die Fehlerzeile leer sein"

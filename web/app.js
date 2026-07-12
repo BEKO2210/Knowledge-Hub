@@ -6,6 +6,9 @@
    temporalen Todeszone (let/const) — die Seite bliebe weiß. */
 let LANG = 'de';
 const EN = {
+  'gespeichert · {wann}': 'saved · {wann}',
+  'Neu erklären': 'Explain again',
+  'Bitte Name und Wert ausfüllen.': 'Please fill in both name and value.',
   'Adresse kopiert': 'Address copied',
   'Token kopiert': 'Token copied',
   /* Fehler im Mapping-Verlauf */
@@ -424,6 +427,23 @@ function hideError() {
   const b = $('errbanner');
   if (b) b.classList.remove('on');
 }
+
+/* Die Erklärung des Servers herausholen — sicher.
+   Vorher stand an mehreren Stellen `(await r.json()).error || '…'`. Antwortet der
+   Server einmal NICHT mit JSON (Proxy-Fehlerseite, leerer Body), wirft r.json() und
+   die Meldung verschwindet spurlos. Und an drei Stellen wurde die Erklärung gar nicht
+   erst gelesen — der Nutzer sah nur „Fehler beim Speichern" und wusste nicht, warum.
+   Genau daran ist das Anlegen eines Secrets mit „@" im Namen gescheitert. */
+async function fehlerText(r, rueckfall) {
+  try {
+    const j = await r.clone().json();
+    if (j && typeof j.error === 'string' && j.error.trim()) return j.error;
+  } catch (e) { /* keine JSON-Antwort — dann eben der Rückfall */ }
+  return rueckfall;
+}
+async function zeigeFehler(r, rueckfall) {
+  toast(await fehlerText(r, rueckfall), false);
+}
 function toast(msg, ok = true) {
   const t = document.createElement('div');
   t.className = 'toast' + (ok ? '' : ' err');
@@ -660,10 +680,15 @@ async function sendAsk(e) {
         }
         box.firstChild.appendChild(src);
       }
-      if (j.source === 'llm') {
+      if (j.source === 'llm' || j.source === 'gespeichert') {
         const foot = document.createElement('div');
         foot.style.cssText = 'margin-top:10px;color:var(--mut2);font-size:.72rem';
-        foot.textContent = `${j.backend} · ${j.model}`;
+        foot.textContent = `${j.backend || ''} · ${j.model || ''}`;
+        if (j.source === 'gespeichert') {
+          /* Der Nutzer soll wissen, dass er hier eine bereits bezahlte Antwort liest —
+             und nicht rätseln, warum sie so schnell kam. */
+          foot.textContent += ' · ' + t2('gespeichert · {wann}', {wann: relTime(j.gespeichert)});
+        }
         box.firstChild.appendChild(foot);
       }
       thread.appendChild(box);
@@ -970,7 +995,7 @@ async function repairProject(p, row) {
   log.textContent = t('Reparatur gestartet…');
   const r = await api('/ui/api/mapping/repair', {method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({path: p.path})});
-  if (!r.ok) { toast((await r.json()).error || t('Start fehlgeschlagen'), false); btn.disabled = false; return; }
+  if (!r.ok) { await zeigeFehler(r, t('Start fehlgeschlagen')); btn.disabled = false; return; }
   const poll = setInterval(async () => {
     const s = await (await api('/ui/api/mapping/repair?path=' + encodeURIComponent(p.path))).json();
     log.textContent = s.log || '';
@@ -1018,7 +1043,7 @@ async function pickCurrent() {
     const r = await api('/ui/api/mapping/projects', {method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({path: pickAt})});
     if (r.ok) { toast(t('Projekt hinzugefügt — läuft ab jetzt im Nacht-Mapping mit')); $('pickerdlg').close(); }
-    else toast((await r.json()).error || t('Fehler'), false);
+    else await zeigeFehler(r, t('Fehler'));
   } finally { $('pickok').disabled = false; loadProjectsCard(); loadMapping(); }
 }
 let ignoreFor = null;
@@ -1035,7 +1060,7 @@ async function saveIgnore() {
     const r = await api('/ui/api/mapping/ignore', {method: 'PUT', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({path: ignoreFor, content: $('ignoretext').value})});
     if (r.ok) { toast(t('Ausschluss-Regeln gespeichert')); $('ignoredlg').close(); }
-    else toast((await r.json()).error || t('Fehler beim Speichern'), false);
+    else await zeigeFehler(r, t('Fehler beim Speichern'));
   } finally { $('ignoresave').disabled = false; loadProjectsCard(); }
 }
 
@@ -1049,7 +1074,7 @@ async function saveApiKey(e) {
     const r = await api('/ui/api/secrets', {method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({name: b.secret, value: v})});
     if (r.ok) { toast(t2('{label}-Key gespeichert — Mapping ist einsatzbereit', {label: b.label})); $('apikey').value = ''; }
-    else toast(t('Fehler beim Speichern'), false);
+    else await zeigeFehler(r, t('Fehler beim Speichern'));
   } finally { $('keysave').disabled = false; loadMapping(); }
 }
 async function toggleMapping(on) {
@@ -1057,7 +1082,7 @@ async function toggleMapping(on) {
   const r = await api('/ui/api/mapping/toggle', {method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({enabled: on})});
   if (r.ok) toast(on ? t('Nacht-Mapping eingeschaltet') : t('Nacht-Mapping ausgeschaltet'));
-  else { toast(t('Fehler beim Umschalten'), false); }
+  else await zeigeFehler(r, t('Fehler beim Umschalten'));
   loadMapping();
 }
 async function saveMapping(e) {
@@ -1069,14 +1094,14 @@ async function saveMapping(e) {
     const r = await api('/ui/api/mapping/config', {method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({time: $('maptime').value, backend: $('mapbackend').value, model})});
     if (r.ok) toast(t2('Gespeichert — täglich um {time} mit {model}', {time: $('maptime').value, model}));
-    else toast((await r.json()).error || t('Fehler beim Speichern'), false);
+    else await zeigeFehler(r, t('Fehler beim Speichern'));
   } finally { $('mapsave').disabled = false; loadMapping(); }
 }
 async function runMapping() {
   $('runbtn').disabled = true;
   const r = await api('/ui/api/mapping/run', {method: 'POST'});
   if (r.ok) toast(t('Mapping gestartet'));
-  else toast((await r.json()).error || t('Start fehlgeschlagen'), false);
+  else await zeigeFehler(r, t('Start fehlgeschlagen'));
   setTimeout(loadMapping, 1500);
 }
 
@@ -1434,14 +1459,18 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') { pathSource
   side.addEventListener('touchend', () => startY = null);
 })();
 
-async function doExplain() {
+async function doExplain(frisch) {
   if (!selected) return;
   const sel = selected;
   const out = $('explainout'), wait = $('explainwait');
   out.style.display = 'none';
   wait.style.display = 'flex';            // Marken-Loader statt Text-Platzhalter
   try {
-    const r = await api(`/ui/api/explain/${$('proj').value}?node=${encodeURIComponent(sel.label)}`);
+    /* frisch=true umgeht den Speicher — für den Fall, dass die alte Erklärung nichts taugt.
+       Ohne das Flag kommt eine bereits bezahlte Erklärung in Millisekunden zurück, statt
+       dieselbe Frage ein zweites Mal zu bezahlen. */
+    const q = frisch ? '&fresh=1' : '';
+    const r = await api(`/ui/api/explain/${$('proj').value}?node=${encodeURIComponent(sel.label)}${q}`);
     const j = await r.json();
     out.innerHTML = '';
     if (j.error) { out.textContent = j.error; }
@@ -1456,10 +1485,23 @@ async function doExplain() {
         n.textContent = j.note;
         out.appendChild(n);
       }
-      if (j.source === 'llm') {
+      if (j.source === 'llm' || j.source === 'gespeichert') {
         const foot = document.createElement('div');
         foot.style.cssText = 'margin-top:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap';
-        foot.innerHTML = `<span class="chip"><svg class="ic" style="width:13px;height:13px;color:var(--acc)" viewBox="0 0 24 24"><use href="#i-spark"/></svg>${j.backend} · ${j.model}</span>`;
+        const gespeichert = j.source === 'gespeichert';
+        foot.innerHTML = `<span class="chip"><svg class="ic" style="width:13px;height:13px;color:var(--acc)" viewBox="0 0 24 24"><use href="#i-spark"/></svg>${escapeHtml(j.backend || '')} · ${escapeHtml(j.model || '')}</span>`;
+        if (gespeichert) {
+          /* Ehrlich sagen, woher die Antwort kommt — und einen Weg anbieten, sie zu erneuern. */
+          const chip = document.createElement('span');
+          chip.className = 'chip';
+          chip.textContent = t2('gespeichert · {wann}', {wann: relTime(j.gespeichert)});
+          foot.appendChild(chip);
+          const neu = document.createElement('button');
+          neu.className = 'btn ghost sm';
+          neu.textContent = t('Neu erklären');
+          neu.onclick = () => doExplain(true);
+          foot.appendChild(neu);
+        }
         const det = document.createElement('details');
         det.style.cssText = 'margin-top:10px;font-size:.78rem;color:var(--mut2)';
         det.innerHTML = `<summary style="cursor:pointer">${t('Rohdaten aus dem Graphen')}</summary>`;
@@ -1726,8 +1768,14 @@ async function revokeAllSessions() {
 
 async function addSecret(e) {
   e.preventDefault();
+  $('secerr').textContent = '';
   const name = $('sname').value.trim(), value = $('svalue').value;
-  if (!name || !value) { toast(t('Name und Wert eingeben'), false); return; }
+  if (!name || !value) {
+    const msg = t('Bitte Name und Wert ausfüllen.');
+    $('secerr').textContent = msg;
+    toast(msg, false);
+    return;
+  }
   const btn = $('addbtn');
   btn.disabled = true;
   try {
@@ -1735,9 +1783,14 @@ async function addSecret(e) {
       body: JSON.stringify({name, value})});
     if (r.ok) {
       toast(t2('Gespeichert: {name}', {name}));
+      $('secerr').textContent = '';
       $('sname').value = ''; $('svalue').value = '';
       loadSecrets();
-    } else toast(t('Fehler beim Speichern'), false);
+    } else {
+      const msg = await fehlerText(r, t('Fehler beim Speichern'));
+      $('secerr').textContent = msg;      // bleibt stehen, bis es behoben ist
+      toast(msg, false);
+    }
   } finally { btn.disabled = false; }
 }
 
@@ -1951,7 +2004,7 @@ async function loadVault() {
     const r = await api('/ui/api/vault/autounlock', {method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({enabled: on})});
     if (r.ok) toast(on ? t('Automatische Entsperrung aktiv') : t('Vault bleibt künftig nach Neustarts gesperrt'));
-    else { toast((await r.json()).error || t('Fehlgeschlagen'), false); e.target.checked = !on; }
+    else { await zeigeFehler(r, t('Fehlgeschlagen')); e.target.checked = !on; }
     loadVault(); loadHealth();
   };
 }
@@ -2114,7 +2167,7 @@ async function runBackup() {
   const btn = $('backupbtn');
   if (btn) btn.disabled = true;
   const r = await api('/ui/api/backup/run', {method: 'POST'});
-  if (!r.ok) { toast((await r.json()).error || t('Start fehlgeschlagen'), false); if (btn) btn.disabled = false; return; }
+  if (!r.ok) { await zeigeFehler(r, t('Start fehlgeschlagen')); if (btn) btn.disabled = false; return; }
   toast(t('Sicherung gestartet'));
   setTimeout(loadBackup, 1200);
 }

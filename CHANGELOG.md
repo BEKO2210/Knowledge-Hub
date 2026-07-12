@@ -6,6 +6,33 @@ Alle nennenswerten Änderungen an diesem Projekt. Format angelehnt an
 
 ## [Unveröffentlicht]
 
+### Behoben
+- **„Erklären lassen" und der Fragen-Tab waren tot**, sobald das Modell auf die gpt-5-Familie
+  stand. Die schickt `max_tokens` — die neuen Modelle verlangen `max_completion_tokens` und
+  antworten sonst mit HTTP 400. Der Hub fiel still auf die Graph-Rohdaten zurück, sodass der
+  Nutzer statt einer Erklärung eine Knotenliste sah. `llm.py` wählt den Namen jetzt nach Modell
+  **und heilt sich selbst**: Widerspricht der Anbieter trotzdem, wird einmal mit dem anderen
+  Namen wiederholt — das nächste neue Modell legt den Hub nicht wieder lahm.
+- **Der Nacht-Lauf zerstörte die Bereichsnamen.** Er rief `graphify extract` + `sync` auf, aber nie
+  `graphify label`. Clustern ohne Benennen heißt: Jeder neue Bereich hieß in der Oberfläche wieder
+  „Bereich 0, 1, 2…". Jede Benennung zerfiel damit in der nächsten Nacht, sobald sich ein Projekt
+  änderte. Jetzt läuft `label --missing-only` nach jedem Extract — bestehende Namen bleiben, nur
+  neue werden benannt (kostet fast nichts).
+- **Die Oberfläche verschluckte Server-Fehler.** Drei Stellen zeigten nur „Fehler beim Speichern"
+  und warfen die Erklärung des Servers weg; sieben weitere lasen sie über ein zerbrechliches
+  `(await r.json()).error`, das bei einer nicht-JSON-Antwort selbst wirft. Alle zehn laufen jetzt
+  über ein sicheres `fehlerText()`. Das Secret-Formular hat eine **stehende** Fehlerzeile statt
+  eines Toasts, der nach 3 Sekunden weg ist. (Genau daran scheiterte das Anlegen eines Secrets
+  mit „@" im Namen — der Nutzer sah nie, welche Zeichen erlaubt sind.)
+
+### Hinzugefügt
+- **Antwort-Speicher.** Jede Erklärung und jede Frage wird gespeichert und beim nächsten Mal
+  wiederverwendet: 7,9 s und echtes Geld → **0,3 s und gratis**. Der Schlüssel enthält den Stand
+  des Graphen, sodass Antworten nach einem Neu-Mapping von selbst verfallen — eine veraltete
+  Erklärung wäre schlimmer als gar keine. Die Oberfläche sagt ehrlich „gespeichert · vor 4 Min."
+  und bietet „Neu erklären" an. Jede Antwort wandert zusätzlich per `graphify save-result` ins
+  Graph-Gedächtnis, den Rückkanal für `graphify reflect`.
+
 ### Hinzugefügt
 - **Notizen aus dem Chat.** Drei neue MCP-Werkzeuge: `note_save` legt Wissen aus einem
   Gespräch als Markdown-Datei unter `~/knowledge-notes/<projekt>/` ab und registriert das
