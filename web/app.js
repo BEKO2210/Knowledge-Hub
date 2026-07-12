@@ -1291,9 +1291,21 @@ function jumpToNode(n) {
 }
 window.addEventListener('scroll', () => $('searchdrop').classList.contains('on') && positionSearchDrop(), true);
 /* Community-Legende: farbige Bereiche mit Knotenzahl, Klick isoliert einen Bereich */
+/* Namen der Bereiche, die die KI vergeben hat (Nummer -> Name). Fehlt einer,
+   fällt die Legende auf „Bereich N" zurück — nie auf einen leeren Eintrag. */
+let COMNAMES = new Map();
+function comLabel(com) {
+  const n = COMNAMES.get(com);
+  return n ? n : t2('Bereich {n}', {n: com});
+}
 function buildLegend(nodes) {
   const counts = new Map();
-  for (const n of nodes) { if (n.community == null) continue; counts.set(n.community, (counts.get(n.community) || 0) + 1); }
+  COMNAMES = new Map();
+  for (const n of nodes) {
+    if (n.community == null) continue;
+    counts.set(n.community, (counts.get(n.community) || 0) + 1);
+    if (n.community_name && !COMNAMES.has(n.community)) COMNAMES.set(n.community, n.community_name);
+  }
   const leg = $('legend'), body = $('legendbody');
   if (counts.size < 2) { leg.classList.add('hidden'); comFilter = null; return; }
   leg.classList.remove('hidden');
@@ -1302,7 +1314,7 @@ function buildLegend(nodes) {
     const b = document.createElement('button');
     b.className = 'legrow' + (comFilter === com ? ' active' : '');
     b.dataset.com = com;
-    b.innerHTML = `<span class="dot" style="background:${PALETTE[com % PALETTE.length]}"></span><span class="lc">${t2('Bereich {n}', {n: com})}</span><span class="ln"></span>`;
+    b.innerHTML = `<span class="dot" style="background:${PALETTE[com % PALETTE.length]}"></span><span class="lc">${escapeHtml(comLabel(com))}</span><span class="ln"></span>`;
     b.querySelector('.ln').textContent = cnt;
     b.onclick = () => setComFilter(com);
     body.appendChild(b);
@@ -1324,7 +1336,7 @@ function selectNode(d) {
   $('ntitle').textContent = d.label;
   const com = d.community == null ? '–' : d.community;
   $('nmeta').innerHTML =
-    `<span class="chip"><span style="width:9px;height:9px;border-radius:50%;background:${nodeColor(d)}"></span>${t2('Community {n}', {n: com})}</span>` +
+    `<span class="chip"><span style="width:9px;height:9px;border-radius:50%;background:${nodeColor(d)}"></span>${escapeHtml(comLabel(com))}</span>` +
     `<span class="chip">${t2('{n} Verbindungen', {n: d.degree})}</span>`;
   $('nfile').textContent = d.file || '';
   $('explainout').style.display = 'none';
@@ -1371,7 +1383,7 @@ function finishPath(target) {
   $('ntitle').textContent = target.label;
   const com = target.community == null ? '–' : target.community;
   $('nmeta').innerHTML =
-    `<span class="chip"><span style="width:9px;height:9px;border-radius:50%;background:${nodeColor(target)}"></span>${t2('Community {n}', {n: com})}</span>` +
+    `<span class="chip"><span style="width:9px;height:9px;border-radius:50%;background:${nodeColor(target)}"></span>${escapeHtml(comLabel(com))}</span>` +
     `<span class="chip">${t2('{n} Verbindungen', {n: target.degree})}</span>`;
   $('nfile').textContent = target.file || '';
   $('explainout').style.display = 'none'; $('explainwait').style.display = 'none';

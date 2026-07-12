@@ -54,6 +54,9 @@ async def graph(request: Request) -> JSONResponse:
             "id": n["id"],
             "label": n.get("label", n["id"]),
             "community": n.get("community"),
+            # Der von der KI vergebene Bereichsname. Ohne ihn zeigt die Oberfläche
+            # nur „Bereich 7" — die Benennung wäre unsichtbar und damit sinnlos.
+            "community_name": n.get("community_name"),
             "file": n.get("source_file"),
             "degree": degree.get(n["id"], 0),
         }

@@ -98,3 +98,32 @@ def test_statischer_token_ist_konstantzeit_geprueft(client, fresh_vault):
     kurz = TEST_MCP_TOKEN[:-1]
     r = client.get("/ui/api/health", headers={"Authorization": f"Bearer {kurz}"})
     assert r.status_code == 401
+
+
+def test_bereichsnamen_werden_ausgeliefert(client, auth, fresh_vault, tmp_path, monkeypatch):
+    """Der Graph-Endpunkt muss den KI-vergebenen Bereichsnamen mitschicken.
+
+    Ohne ihn zeigt die Oberfläche nur „Bereich 7" — die gesamte Benennung wäre
+    unsichtbar und damit wertlos. Genau das war lange der Fall.
+    """
+    import json
+
+    from api import common
+
+    projekt = tmp_path / "demo" / "graphify-out"
+    projekt.mkdir(parents=True)
+    (projekt / "graph.json").write_text(json.dumps({
+        "nodes": [
+            {"id": "a", "label": "A", "community": 3, "community_name": "Auth and Sessions"},
+            {"id": "b", "label": "B", "community": 3, "community_name": "Auth and Sessions"},
+        ],
+        "links": [{"source": "a", "target": "b"}],
+    }))
+    monkeypatch.setattr(common, "KNOWLEDGE_ROOT", tmp_path)
+    import api.knowledge as k
+    monkeypatch.setattr(k, "KNOWLEDGE_ROOT", tmp_path)
+
+    r = client.get("/ui/api/graph/demo", headers=auth)
+    assert r.status_code == 200
+    knoten = r.json()["nodes"]
+    assert all(n["community_name"] == "Auth and Sessions" for n in knoten)
