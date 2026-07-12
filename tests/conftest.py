@@ -47,6 +47,7 @@ os.environ.update(
     KMCP_ENV_FILE=str(_TMP / "env"),
     VAULT_PATH=str(_TMP / "vault.enc"),
     KMCP_DATA_DIR=str(_TMP),
+    KMCP_NOTES_ROOT=str(_TMP / "notes"),
     KNOWLEDGE_ROOT=str(_TMP / "projects"),
     MCP_TOKEN=TEST_MCP_TOKEN,
     OAUTH_PASSWORD="",

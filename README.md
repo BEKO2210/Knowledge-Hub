@@ -15,7 +15,7 @@ without you ever pasting a credential into a chat window.
 [![CI](https://github.com/BEKO2210/Knowledge-Hub/actions/workflows/ci.yml/badge.svg)](https://github.com/BEKO2210/Knowledge-Hub/actions/workflows/ci.yml)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 [![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/tests-78%20passing-22c55e)](tests/)
+[![Tests](https://img.shields.io/badge/tests-85%20passing-22c55e)](tests/)
 [![MCP](https://img.shields.io/badge/MCP-OAuth_2.1%20%2B%20PKCE-8b5cf6)](https://modelcontextprotocol.io)
 [![Self-hosted](https://img.shields.io/badge/self--hosted-your%20server%2C%20your%20data-0ea5e9)](#install)
 
@@ -133,6 +133,9 @@ can be revoked with one click; the token dies instantly.
 | `graph_path` | Shortest path between two concepts |
 | `graph_build` | Maps (or re-maps) a project on demand |
 | `report_get` | The full graph report: hub nodes, clusters, surprises |
+| `note_save` | Saves knowledge from the conversation as a markdown note — it joins the graph on the next mapping run |
+| `note_list` | The notes stored in a notes project |
+| `project_create` | Creates a fresh notes project and registers it for nightly mapping |
 | `secret_list` · `secret_get` · `secret_set` · `secret_delete` | The vault — every access audited |
 
 ---
@@ -207,7 +210,7 @@ inconvenient to admit.
 pip install -r requirements-dev.txt
 playwright install chromium
 
-pytest          # 78 tests: unit, HTTP, and end-to-end in a real browser
+pytest          # 85 tests: unit, HTTP, and end-to-end in a real browser
 ruff check .    # lint
 ./deploy.sh     # test, roll out — and roll back if the hub stops answering
 ```
@@ -223,7 +226,7 @@ web/       index.html, app.css, app.js — no build step, no bundler
 ui.py      the web layer: assets, security headers, routes
 vault.py   encryption
 oauth.py   OAuth 2.1 + PKCE
-tests/     78 of them
+tests/     85 of them
 ```
 
 The interface is English by default and German at the flick of a switch (top right).

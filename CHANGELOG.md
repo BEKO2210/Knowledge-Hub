@@ -7,6 +7,17 @@ Alle nennenswerten Änderungen an diesem Projekt. Format angelehnt an
 ## [Unveröffentlicht]
 
 ### Hinzugefügt
+- **Notizen aus dem Chat.** Drei neue MCP-Werkzeuge: `note_save` legt Wissen aus einem
+  Gespräch als Markdown-Datei unter `~/knowledge-notes/<projekt>/` ab und registriert das
+  Projekt automatisch fürs Nacht-Mapping; `note_list` zeigt die Notizen eines Projekts;
+  `project_create` legt ein leeres Wissensgebiet an. Bewusst kein eigenes Datenbankformat:
+  graphify liest Markdown ohnehin semantisch, und die Dateien bleiben mit jedem Editor
+  lesbar. Der Kreislauf ist damit geschlossen — „merk dir das" im Chat wird zur Notiz,
+  die Notiz zum Graphen, der Graph per `graph_query` befragbar. Gleicher Titel am selben
+  Tag überschreibt nie (wird nummeriert), Projektnamen können nicht aus dem Notiz-Ordner
+  ausbrechen, jede Speicherung landet im Audit-Log. +8 Tests.
+
+### Hinzugefügt
 - **Übersetzung vollständig.** Ein Prüf-Skript ruft die Oberfläche auf Englisch auf und sucht
   jeden sichtbaren deutschen Text — Ergebnis: **null**. Die letzten Lücken saßen an Stellen, die
   keine Übersetzung je erreicht hätte: deutsche Literale in `oninput`/`onclick`-Attributen im

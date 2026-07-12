@@ -49,7 +49,10 @@ mcp = FastMCP(
         "Self-hosted knowledge hub. Knowledge graphs of your projects "
         "(query/explain/report) plus an encrypted secrets vault. Secrets are sensitive: "
         "fetch them only when a task genuinely needs a credential, never echo them back "
-        "into chat unless the user explicitly asks."
+        "into chat unless the user explicitly asks. "
+        "When the user shares knowledge worth keeping (facts about themselves, decisions, "
+        "research, ideas), offer to save it with note_save — notes become part of the "
+        "knowledge graph on the next mapping run."
     ),
 )
 
@@ -212,6 +215,102 @@ def secret_set(name: str, value: str) -> str:
     """Store or overwrite a secret in the encrypted vault."""
     vault.secret_set(name, value, client="mcp")
     return f"stored {name!r}"
+
+
+# ---------------------------------------------------------------------------
+# Notizen: Wissen aus dem Chat in den Hub schreiben
+# ---------------------------------------------------------------------------
+# Jede Notiz ist eine Markdown-Datei unter ~/knowledge-notes/<projekt>/. Das ist
+# bewusst kein eigenes Datenbankformat: graphify liest Markdown ohnehin semantisch,
+# die Dateien bleiben mit jedem Editor lesbar, und ein Projekt ist einfach ein Ordner.
+NOTES_ROOT = Path(os.environ.get("KMCP_NOTES_ROOT", str(Path.home() / "knowledge-notes")))
+_SLUG_RE = __import__("re").compile(r"[^a-z0-9äöüß]+")
+
+
+def _slug(text: str, fallback: str) -> str:
+    s = _SLUG_RE.sub("-", text.lower()).strip("-")[:60]
+    return s or fallback
+
+
+def _register_project(path: Path) -> bool:
+    """Ordner ins Nacht-Mapping eintragen (idempotent). True = war neu."""
+    entries = config.project_entries()
+    home = str(Path.home())
+    stored = "~" + str(path)[len(home):] if str(path).startswith(home) else str(path)
+    if any(str(Path(e["path"]).expanduser()) == str(path) for e in entries):
+        return False
+    entries.append({"path": stored, "enabled": True})
+    config.save_projects(entries)
+    return True
+
+
+def _write_note(project: str, title: str, content: str, tags: list[str] | None) -> tuple[Path, bool]:
+    pslug = _slug(project, "notizen")
+    folder = (NOTES_ROOT / pslug).resolve()
+    if not folder.is_relative_to(NOTES_ROOT):
+        raise ValueError("invalid project name")
+    folder.mkdir(parents=True, exist_ok=True)
+    neu = _register_project(folder)
+    stamp = time.strftime("%Y-%m-%d")
+    name = f"{stamp}-{_slug(title, 'notiz')}.md"
+    f = folder / name
+    n = 2
+    while f.exists():                       # gleicher Titel am selben Tag -> nummerieren
+        f = folder / f"{stamp}-{_slug(title, 'notiz')}-{n}.md"
+        n += 1
+    kopf = [f"# {title.strip()}", ""]
+    meta = [f"*Gespeichert am {time.strftime('%Y-%m-%d %H:%M')} aus einem Claude-Chat.*"]
+    if tags:
+        meta.append("Tags: " + ", ".join(str(t).strip() for t in tags if str(t).strip()))
+    f.write_text("\n".join(kopf + meta + ["", content.strip(), ""]), encoding="utf-8")
+    vault.audit("NOTE-SAVE", f"{pslug}/{f.name}", client="mcp")
+    return f, neu
+
+
+@mcp.tool
+def note_save(project: str, title: str, content: str, tags: list[str] | None = None) -> str:
+    """Save knowledge from this conversation into the hub as a markdown note.
+
+    Use when the user shares something worth keeping: facts about themselves,
+    decisions, research findings, ideas. `project` groups related notes (e.g.
+    "ueber-belkis", "geschaeftsideen") — it is created and registered for the
+    nightly mapping automatically. The note becomes part of the knowledge graph
+    on the next mapping run and is then answerable via graph_query.
+    """
+    f, neu = _write_note(project, title, content, tags)
+    hinweis = " New project registered for nightly mapping (03:30)." if neu else ""
+    return (f"saved {f.name} in project {f.parent.name!r}.{hinweis} "
+            f"It enters the knowledge graph on the next mapping run.")
+
+
+@mcp.tool
+def note_list(project: str) -> list[str]:
+    """List the notes stored in a notes project (filenames, newest first)."""
+    folder = (NOTES_ROOT / _slug(project, "notizen")).resolve()
+    if not folder.is_relative_to(NOTES_ROOT) or not folder.is_dir():
+        return []
+    return sorted((f.name for f in folder.glob("*.md")), reverse=True)
+
+
+@mcp.tool
+def project_create(name: str, description: str = "") -> str:
+    """Create a new (empty) notes project in the hub and register it for mapping.
+
+    Use when the user wants a fresh knowledge area without saving a note yet.
+    For code repositories use graph_build instead.
+    """
+    pslug = _slug(name, "")
+    if not pslug:
+        raise ValueError("project name must contain letters or digits")
+    folder = (NOTES_ROOT / pslug).resolve()
+    folder.mkdir(parents=True, exist_ok=True)
+    readme = folder / "README.md"
+    if not readme.exists():
+        readme.write_text(f"# {name.strip()}\n\n{description.strip()}\n", encoding="utf-8")
+    neu = _register_project(folder)
+    vault.audit("PROJECT-CREATE", pslug, client="mcp")
+    return (f"project {pslug!r} {'created and registered' if neu else 'already existed'} "
+            f"at {folder}. Save knowledge into it with note_save.")
 
 
 @mcp.tool
