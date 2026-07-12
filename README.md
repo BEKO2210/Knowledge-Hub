@@ -15,7 +15,7 @@ without you ever pasting a credential into a chat window.
 [![CI](https://github.com/BEKO2210/Knowledge-Hub/actions/workflows/ci.yml/badge.svg)](https://github.com/BEKO2210/Knowledge-Hub/actions/workflows/ci.yml)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 [![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/tests-67%20passing-22c55e)](tests/)
+[![Tests](https://img.shields.io/badge/tests-77%20passing-22c55e)](tests/)
 [![MCP](https://img.shields.io/badge/MCP-OAuth_2.1%20%2B%20PKCE-8b5cf6)](https://modelcontextprotocol.io)
 [![Self-hosted](https://img.shields.io/badge/self--hosted-your%20server%2C%20your%20data-0ea5e9)](#install)
 
@@ -179,9 +179,27 @@ and the nightly job fetches its own API key at 03:30 without waking you.
 - Secret **values** are never returned by the list endpoint and never rendered until requested.
 - Encrypted off-site backups (local + git), verifiable with `python backup.py verify`.
 
-Found a vulnerability? See [SECURITY.md](SECURITY.md) — please report it privately.
+Found a vulnerability? See [SECURITY.md](SECURITY.md) — please
+[report it privately](https://github.com/BEKO2210/Knowledge-Hub/security/advisories/new).
 
 ---
+
+## Documentation
+
+The **[wiki](https://github.com/BEKO2210/Knowledge-Hub/wiki)** is the long version:
+[Installation](https://github.com/BEKO2210/Knowledge-Hub/wiki/Installation) ·
+[Configuration](https://github.com/BEKO2210/Knowledge-Hub/wiki/Configuration) ·
+[Connecting AI clients](https://github.com/BEKO2210/Knowledge-Hub/wiki/Connecting-AI-clients) ·
+[Backup and restore](https://github.com/BEKO2210/Knowledge-Hub/wiki/Backup-and-restore) ·
+[Security model](https://github.com/BEKO2210/Knowledge-Hub/wiki/Security-model) ·
+[Troubleshooting](https://github.com/BEKO2210/Knowledge-Hub/wiki/Troubleshooting) ·
+[Architecture](https://github.com/BEKO2210/Knowledge-Hub/wiki/Architecture) ·
+[FAQ](https://github.com/BEKO2210/Knowledge-Hub/wiki/FAQ)
+
+Questions and ideas go in [Discussions](https://github.com/BEKO2210/Knowledge-Hub/discussions).
+What is done, what is next, and what is still broken:
+[the roadmap](https://github.com/users/BEKO2210/projects/3) — including the parts that are
+inconvenient to admit.
 
 ## Development
 
@@ -189,7 +207,7 @@ Found a vulnerability? See [SECURITY.md](SECURITY.md) — please report it priva
 pip install -r requirements-dev.txt
 playwright install chromium
 
-pytest          # 67 tests: unit, HTTP, and end-to-end in a real browser
+pytest          # 77 tests: unit, HTTP, and end-to-end in a real browser
 ruff check .    # lint
 ./deploy.sh     # test, roll out — and roll back if the hub stops answering
 ```
@@ -205,7 +223,7 @@ web/       index.html, app.css, app.js — no build step, no bundler
 ui.py      the web layer: assets, security headers, routes
 vault.py   encryption
 oauth.py   OAuth 2.1 + PKCE
-tests/     67 of them
+tests/     77 of them
 ```
 
 The interface is English by default and German at the flick of a switch (top right).

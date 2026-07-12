@@ -1,0 +1,30 @@
+name: Feature request
+description: Suggest something the hub should do.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      description: >
+        Describe the situation, not the solution. "I can't tell which project a nightly
+        failure came from" is more useful than "add a dropdown".
+    validations:
+      required: true
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: How do you imagine it working?
+      description: Optional. If you already have a shape in mind, sketch it.
+
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Does it fit the project?
+      description: >
+        Knowledge Hub is a single-user, self-hosted tool. It does not phone home, it ships no
+        CDN asset, and it has no multi-tenancy. Ideas that need any of those are unlikely to land.
+      options:
+        - label: This works without a third-party service and without giving up self-hosting.
+          required: true

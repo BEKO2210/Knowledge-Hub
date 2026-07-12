@@ -50,7 +50,7 @@ DEFAULTS: dict = {
                 "secret": "open_ai",
                 "env": "OPENAI_API_KEY",
                 "key_url": "https://platform.openai.com/api-keys",
-                "models": [{"id": "gpt-4.1-mini", "hint": "empfohlen"}],
+                "models": [{"id": "gpt-4.1-mini", "hint": "recommended"}],
             }
         },
         "projects": [],  # Liste von {path: str, enabled: bool}

@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/BEKO2210/Knowledge-Hub/security/advisories/new
+    about: Report it privately. Never in a public issue.
+  - name: Question or idea
+    url: https://github.com/BEKO2210/Knowledge-Hub/discussions
+    about: Ask in Discussions — issues are for bugs and concrete proposals.

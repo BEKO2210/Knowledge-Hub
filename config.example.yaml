@@ -1,11 +1,11 @@
-# Knowledge Hub — Beispiel-Konfiguration
-# Wird von install.sh nach ~/.config/knowledge-mcp/config.yaml kopiert.
+# Knowledge Hub — example configuration
+# install.sh copies this to ~/.config/knowledge-mcp/config.yaml
 #
-# Secrets gehören NICHT hierher:
-#   * Zugangspasswort, Vault-Schlüssel, MCP-Token -> ~/.config/knowledge-mcp/env (erzeugt der Wizard)
-#   * API-Keys der KI-Anbieter                    -> Secrets-Vault (Eingabe in der Web-UI)
+# Secrets do NOT belong here:
+#   * password, vault key, MCP token -> ~/.config/knowledge-mcp/env (the wizard creates it)
+#   * AI provider API keys           -> the secrets vault (enter them in the web interface)
 #
-# Projekte trägst du in der Web-UI ein (Mapping-Tab) — sie landen dann unter mapping.projects.
+# Projects are added in the web interface (Mapping tab); they end up under mapping.projects.
 
 server:
   host: 127.0.0.1
@@ -27,18 +27,18 @@ mapping:
       secret: open_ai
       env: OPENAI_API_KEY
       key_url: https://platform.openai.com/api-keys
-      key_hint: Key beginnt mit sk-…
+      key_hint: Key starts with sk-…
       models:
       - id: gpt-4.1-nano
-        hint: am günstigsten · $0.10/$0.40
+        hint: cheapest · $0.10/$0.40
       - id: gpt-4.1-mini
-        hint: empfohlen · $0.40/$1.60
+        hint: recommended · $0.40/$1.60
       - id: gpt-4.1
-        hint: stark · $2.00/$8.00
+        hint: strong · $2.00/$8.00
       - id: gpt-5-mini
-        hint: günstig & modern · $0.25/$2.00
+        hint: cheap & modern · $0.25/$2.00
       - id: gpt-5
-        hint: am stärksten · $1.25/$10.00
+        hint: strongest · $1.25/$10.00
       api: openai
       base_url: https://api.openai.com/v1
     gemini:
@@ -46,14 +46,14 @@ mapping:
       secret: gemini_api_key
       env: GEMINI_API_KEY
       key_url: https://aistudio.google.com/apikey
-      key_hint: Key aus Google AI Studio
+      key_hint: Key from Google AI Studio
       models:
       - id: gemini-3-flash-preview
-        hint: graphify-Standard · $0.50/$3.00
+        hint: graphify default · $0.50/$3.00
       - id: gemini-2.5-flash
-        hint: günstig & schnell
+        hint: cheap & fast
       - id: gemini-2.5-pro
-        hint: stärkstes Gemini
+        hint: strongest Gemini
       api: openai
       base_url: https://generativelanguage.googleapis.com/v1beta/openai/
     claude:
@@ -61,24 +61,24 @@ mapping:
       secret: anthropic_api_key
       env: ANTHROPIC_API_KEY
       key_url: https://console.anthropic.com/settings/keys
-      key_hint: Key beginnt mit sk-ant-…
+      key_hint: Key starts with sk-ant-…
       models:
       - id: claude-haiku-4-5
-        hint: schnell & günstig · $1.00/$5.00
+        hint: fast & cheap · $1.00/$5.00
       - id: claude-sonnet-5
-        hint: empfohlen · $3.00/$15.00
+        hint: recommended · $3.00/$15.00
       - id: claude-opus-4-8
-        hint: am stärksten · $5.00/$25.00
+        hint: strongest · $5.00/$25.00
       api: anthropic
     deepseek:
       label: DeepSeek
       secret: deepseek_api_key
       env: DEEPSEEK_API_KEY
       key_url: https://platform.deepseek.com/api_keys
-      key_hint: Key beginnt mit sk-…
+      key_hint: Key starts with sk-…
       models:
       - id: deepseek-v4-flash
-        hint: sehr günstig · $0.14/$0.28
+        hint: very cheap · $0.14/$0.28
       api: openai
       base_url: https://api.deepseek.com
     kimi:
@@ -86,24 +86,24 @@ mapping:
       secret: moonshot_api_key
       env: MOONSHOT_API_KEY
       key_url: https://platform.moonshot.ai/console/api-keys
-      key_hint: Key aus der Moonshot-Konsole
+      key_hint: Key from the Moonshot console
       models:
       - id: kimi-k2.6
-        hint: günstig · $0.74/$4.66
+        hint: cheap · $0.74/$4.66
       api: openai
       base_url: https://api.moonshot.ai/v1
     ollama:
-      label: Ollama (lokal)
+      label: Ollama (local)
       secret: null
       env: OLLAMA_API_KEY
       key_url: https://ollama.com/download
-      key_hint: Braucht keinen Key — Ollama muss auf dem Server laufen (Port 11434).
+      key_hint: No key needed — Ollama must be running on the server (port 11434).
       local: true
       models:
       - id: qwen2.5-coder:7b
-        hint: kostenlos, aber langsam auf dieser Hardware
+        hint: free, but slow on modest hardware
       - id: qwen3:4b-instruct-2507-q4_K_M
-        hint: kostenlos, klein — Qualität begrenzt
+        hint: free, small — limited quality
       api: openai
       base_url: http://127.0.0.1:11434/v1
   projects: []
