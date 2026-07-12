@@ -161,7 +161,11 @@ async def vault_password(request: Request) -> JSONResponse:
     except vault.VaultLocked:
         return JSONResponse({"error": T("Vault ist gesperrt — bitte neu anmelden.")}, status_code=423)
     if not ok:
-        return JSONResponse({"error": T("Aktuelles Passwort stimmt nicht.")}, status_code=401)
+        # 403, NICHT 401. Der Aufrufer IST angemeldet — nur diese eine Aktion wird
+        # abgelehnt. Bei 401 hält die Oberfläche das Sitzungs-Token für ungültig und
+        # meldet sofort ab: Wer sich beim Passwortwechsel vertippte, flog raus, statt
+        # „Aktuelles Passwort stimmt nicht." zu lesen.
+        return JSONResponse({"error": T("Aktuelles Passwort stimmt nicht.")}, status_code=403)
     return JSONResponse({"ok": True})
 
 

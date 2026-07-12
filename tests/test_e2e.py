@@ -350,3 +350,47 @@ def test_kaputte_antwort_haengt_nicht_ewig(seite):
 
     text = seite.inner_text("#errbanner")
     assert "gültige Antwort" in text or "Verbindung" in text, text
+
+
+def test_graph_ohne_projekt_erklaert_sich(seite):
+    """Ein frisch installierter Hub hat kein gemapptes Projekt.
+
+    Vorher zeigte der Graphen-Tab dann eine komplett leere Fläche — keine Erklärung,
+    kein Hinweis. Für einen neuen Nutzer sieht das aus, als sei der Hub kaputt.
+    """
+    _anmelden(seite)
+    seite.evaluate("tab('graph')")
+    seite.wait_for_timeout(2000)
+
+    assert seite.is_visible("#graphempty"), "Ohne Projekt muss ein Leerzustand erscheinen"
+    text = seite.inner_text("#graphempty")
+    assert "Mapping" in text, f"Der Leerzustand muss den Weg zeigen: {text!r}"
+
+    # Und der Knopf muss wirklich dorthin führen
+    seite.click("#graphempty button")
+    seite.wait_for_timeout(600)
+    assert seite.evaluate("document.getElementById('tab-mapping').classList.contains('on')")
+
+
+def test_falsches_altes_vault_passwort_wirft_nicht_raus(seite):
+    """Der Server antwortete mit 401 — und die Oberfläche hält JEDEN 401 für ein
+    ungültiges Sitzungs-Token und meldet ab. Wer sich beim Passwortwechsel vertippte,
+    flog aus dem Hub, statt „Aktuelles Passwort stimmt nicht." zu lesen.
+    """
+    _anmelden(seite)
+    seite.evaluate("tab('health')")
+    seite.wait_for_selector("#pwnew", timeout=15000)
+
+    seite.fill("#pwold", "das-ist-nicht-mein-passwort")
+    seite.fill("#pwnew", "neues-langes-passwort")
+    seite.click("#pwbtn")
+    seite.wait_for_timeout(2500)
+
+    # NICHT ausgeloggt
+    assert seite.evaluate(
+        "() => getComputedStyle(document.getElementById('login')).display === 'none'"
+    ), "Ein falsches altes Passwort darf den Nutzer nicht abmelden"
+
+    meldung = seite.inner_text("#toasts") + seite.inner_text("#pwmsg") if seite.locator("#pwmsg").count() \
+        else seite.inner_text("#toasts")
+    assert "stimmt nicht" in meldung.lower() or "aktuelles passwort" in meldung.lower(), meldung

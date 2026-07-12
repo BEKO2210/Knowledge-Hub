@@ -1244,6 +1244,11 @@ async function loadProjects() {
   const sel = $('proj');
   sel.innerHTML = list.map(p =>
     `<option value="${p.project}">${p.project} · ${t2('{n} Knoten', {n: p.nodes})}</option>`).join('');
+  /* Ohne Projekt blieb die Graph-Fläche vorher einfach leer — ein frisch installierter
+     Hub sah aus, als sei er kaputt. Jetzt steht dort, was zu tun ist. */
+  const leer = $('graphempty');
+  if (leer) leer.style.display = list.length ? 'none' : '';
+  $('graphbar').style.display = list.length ? '' : 'none';
   if (list.length) loadGraph();
 }
 let ADJ = new Map(), NODEMAP = new Map(), comFilter = null, pathSource = null, pathIds = null;
