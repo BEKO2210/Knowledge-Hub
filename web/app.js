@@ -6,6 +6,9 @@
    temporalen Todeszone (let/const) — die Seite bliebe weiß. */
 let LANG = 'de';
 const EN = {
+  'Umschalten fehlgeschlagen': 'Could not switch it',
+  'Entfernen fehlgeschlagen': 'Could not remove it',
+  'Zwei-Faktor lässt sich gerade nicht einrichten.': 'Two-factor cannot be set up right now.',
   'gespeichert · {wann}': 'saved · {wann}',
   'Neu erklären': 'Explain again',
   'Bitte Name und Wert ausfüllen.': 'Please fill in both name and value.',
@@ -968,17 +971,31 @@ async function loadProjectsCard() {
       const rb = row.querySelector('.repairbtn');
       if (rb) rb.onclick = () => repairProject(p, row);
     }
-    row.querySelector('input[type=checkbox]').onchange = async () => {
-      await api('/ui/api/mapping/projects', {method: 'PATCH', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({path: p.path, action: 'toggle'})});
-      toast(p.enabled ? t2('{name} vom Nacht-Lauf ausgenommen', {name: p.name}) : t2('{name} wieder im Nacht-Lauf', {name: p.name}));
-      loadProjectsCard(); loadMapping();
+    row.querySelector('input[type=checkbox]').onchange = async (ev) => {
+      /* Vorher wurde das Ergebnis gar nicht geprüft: Bei einem Fehler blieb das Häkchen
+         umgelegt UND es kam eine Erfolgsmeldung — der Nutzer glaubte, es sei gespeichert. */
+      const box = ev.currentTarget;
+      box.disabled = true;
+      try {
+        const r = await api('/ui/api/mapping/projects', {method: 'PATCH', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({path: p.path, action: 'toggle'})});
+        if (!r.ok) {
+          box.checked = !box.checked;          // zurück auf den echten Zustand
+          await zeigeFehler(r, t('Umschalten fehlgeschlagen'));
+          return;
+        }
+        toast(p.enabled ? t2('{name} vom Nacht-Lauf ausgenommen', {name: p.name}) : t2('{name} wieder im Nacht-Lauf', {name: p.name}));
+        loadProjectsCard(); loadMapping();
+      } catch (e) {
+        box.checked = !box.checked;
+      } finally { box.disabled = false; }
     };
     row.querySelector('[data-a=ignore]').onclick = () => openIgnore(p);
     row.querySelector('[data-a=del]').onclick = async () => {
       if (!await askConfirm(t2('„{name}" aus dem Nacht-Mapping entfernen? (Der Graph selbst bleibt erhalten.)', {name: p.name}))) return;
-      await api('/ui/api/mapping/projects', {method: 'PATCH', headers: {'Content-Type': 'application/json'},
+      const r = await api('/ui/api/mapping/projects', {method: 'PATCH', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({path: p.path, action: 'remove'})});
+      if (!r.ok) { await zeigeFehler(r, t('Entfernen fehlgeschlagen')); return; }
       toast(t2('Entfernt: {name}', {name: p.name}));
       loadProjectsCard(); loadMapping();
     };
@@ -1900,8 +1917,18 @@ async function loadTwoFA() {
       <svg class="ic" viewBox="0 0 24 24"><use href="#i-shieldcheck"/></svg>${t('Einrichten')}</button>`;
 }
 async function setup2fa() {
-  $('start2fa').disabled = true;
-  const d = await (await api('/ui/api/2fa/setup', {method: 'POST'})).json();
+  const btn = $('start2fa');
+  btn.disabled = true;
+  let d;
+  try {
+    const r = await api('/ui/api/2fa/setup', {method: 'POST'});
+    if (!r.ok) { await zeigeFehler(r, t('Zwei-Faktor lässt sich gerade nicht einrichten.')); return; }
+    d = await r.json();
+  } catch (e) {
+    /* Ohne dieses finally blieb der Knopf nach einem Fehler FÜR IMMER deaktiviert —
+       der Nutzer konnte 2FA nur noch durch Neuladen der Seite einrichten. */
+    return;
+  } finally { btn.disabled = false; }
   $('twofabody').innerHTML = `
     <p style="margin:0 0 var(--sp-3);color:var(--mut);font-size:.84rem;line-height:1.6">
       ${t('<b>1.</b> Scanne diesen QR-Code mit deiner Authenticator-App:')}</p>

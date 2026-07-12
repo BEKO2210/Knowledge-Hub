@@ -12,7 +12,7 @@ import time
 
 import pytest
 import uvicorn
-from conftest import TEST_PASSWORD
+from conftest import TEST_PASSWORD, TMP
 
 pytest.importorskip("playwright")
 from playwright.sync_api import sync_playwright  # noqa: E402
@@ -261,3 +261,72 @@ def test_gueltiger_secret_name_klappt_weiterhin(seite):
 
     assert "OPENAI_API_KEY" in seite.inner_text("#slist")
     assert not seite.inner_text("#secerr").strip(), "Nach Erfolg muss die Fehlerzeile leer sein"
+
+
+def test_projekt_umschalten_meldet_fehler_und_springt_zurueck(seite, monkeypatch):
+    """Vorher: Der Schalter blieb umgelegt UND es kam eine Erfolgsmeldung — obwohl der
+    Server abgelehnt hatte. Der Nutzer glaubte, es sei gespeichert."""
+    import config
+    from api import mapping as m
+
+    # Der Hub erlaubt Projekte nur unter $HOME und /opt. Für den Test wird das
+    # Wegwerf-Verzeichnis zusätzlich zugelassen — die Regel selbst bleibt unangetastet.
+    (TMP / "projekt-x").mkdir(exist_ok=True)
+    monkeypatch.setattr(m, "BROWSE_ROOTS", [*m.BROWSE_ROOTS, TMP])
+
+    # Die Projektliste liegt in der GETEILTEN Test-Konfiguration. Ohne Aufräumen sähe
+    # jeder spätere Test dieses Projekt — der Sprach-Wachhund hielt „projekt-x" prompt
+    # für unübersetzten deutschen Text im Mapping-Tab.
+    vorher_projekte = config.project_entries()
+
+    _anmelden(seite)
+    seite.evaluate("tab('mapping')")
+    seite.wait_for_timeout(1200)
+
+    seite.evaluate("""(pfad) => api('/ui/api/mapping/projects', {method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({path: pfad})})""", str(TMP / "projekt-x"))
+    seite.wait_for_timeout(1000)
+    seite.evaluate("loadProjectsCard()")
+    seite.wait_for_selector("#projlist input[type=checkbox]", timeout=10000)
+
+    schalter = seite.locator("#projlist input[type=checkbox]").first
+    vorher = schalter.is_checked()
+    # Den Server zum Ablehnen zwingen
+    seite.evaluate("""() => {
+        const echt = window.fetch;
+        window.fetch = (u, o) => (o && o.method === 'PATCH')
+            ? Promise.resolve(new Response(JSON.stringify({error: 'Projekt nicht gefunden'}),
+                {status: 404, headers: {'Content-Type': 'application/json'}}))
+            : echt(u, o);
+    }""")
+    schalter.click()
+    seite.wait_for_timeout(1200)
+
+    try:
+        assert schalter.is_checked() is vorher, "Der Schalter muss auf den echten Zustand zurückspringen"
+        meldung = seite.inner_text("#toasts")
+        assert "Projekt nicht gefunden" in meldung, f"Die Server-Erklärung muss ankommen, kam: {meldung!r}"
+    finally:
+        config.save_projects(vorher_projekte)
+
+
+def test_zweifaktor_knopf_bleibt_nach_fehler_bedienbar(seite):
+    """Vorher: Der Knopf wurde vor dem Aufruf deaktiviert und nie wieder aktiviert.
+    Nach einem Fehler konnte man 2FA nur noch durch Neuladen der Seite einrichten."""
+    _anmelden(seite)
+    seite.evaluate("tab('health')")
+    # Auf das Element warten, nicht auf die Uhr — loadTwoFA() lädt asynchron.
+    seite.wait_for_selector("#start2fa", timeout=15000)
+
+    seite.evaluate("""() => {
+        const echt = window.fetch;
+        window.fetch = (u, o) => String(u).includes('/2fa/setup')
+            ? Promise.resolve(new Response(JSON.stringify({error: 'kaputt'}),
+                {status: 500, headers: {'Content-Type': 'application/json'}}))
+            : echt(u, o);
+    }""")
+    seite.click("#start2fa")
+    seite.wait_for_timeout(1500)
+
+    assert seite.is_enabled("#start2fa"), "Der Knopf darf nach einem Fehler nicht tot bleiben"
