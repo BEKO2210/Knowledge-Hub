@@ -1,6 +1,8 @@
 # --- Niemals ins Repo: Schlüssel, Zustand, Daten --------------------------------
 vault.enc
 vault.enc.*
+vault.lock
+.vault-*.tmp
 audit.log
 errors.log
 errors.log.alt

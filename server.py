@@ -163,7 +163,11 @@ def _build_worker(name: str, path: Path) -> None:
             log.write(f"$ {shlex.join(cmd)}\n")
             log.flush()
             proc = subprocess.run(  # noqa: S603 - fixed binaries, validated path
-                cmd, stdout=log, stderr=subprocess.STDOUT, text=True, timeout=1800,
+                cmd,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                text=True,
+                timeout=1800,
             )
             if proc.returncode != 0:
                 with _builds_lock:
@@ -195,6 +199,7 @@ def graph_build(project: str) -> str:
 @mcp.tool
 def graph_build_status(project: str = "") -> dict | list[dict]:
     """Status of graph builds started via graph_build (all builds if project is empty)."""
+
     def _entry(name: str, b: dict) -> dict:
         log_file = BUILD_LOG_DIR / f"{name}.log"
         tail = log_file.read_text()[-1500:] if log_file.exists() else ""
@@ -209,15 +214,28 @@ def graph_build_status(project: str = "") -> dict | list[dict]:
         return [_entry(n, dict(b)) for n, b in _builds.items()]
 
 
+def _kein_internes(name: str) -> None:
+    """Interne Secrets (2FA-Seed) sind für verbundene Clients unsichtbar.
+
+    Sie gehören der Anwendung, nicht dem Nutzer. Ein Client, der sie lesen darf,
+    umgeht die Zwei-Faktor-Anmeldung; einer, der sie löschen darf, schaltet sie ab.
+    Die Fehlermeldung ist bewusst dieselbe wie für ein nicht vorhandenes Secret —
+    sie soll nicht einmal verraten, dass es den Eintrag gibt.
+    """
+    if name in vault.HIDDEN_SECRETS:
+        raise ValueError(f"no secret named {name!r}")
+
+
 @mcp.tool
 def secret_list() -> list[str]:
     """Names of stored secrets (values are never listed)."""
-    return vault.secret_list(client="mcp")
+    return [s for s in vault.secret_list(client="mcp") if s not in vault.HIDDEN_SECRETS]
 
 
 @mcp.tool
 def secret_get(name: str) -> str:
     """Fetch one secret value from the encrypted vault. Access is audit-logged."""
+    _kein_internes(name)
     value = vault.secret_get(name, client="mcp")
     if value is None:
         raise ValueError(f"no secret named {name!r}")
@@ -227,6 +245,7 @@ def secret_get(name: str) -> str:
 @mcp.tool
 def secret_set(name: str, value: str) -> str:
     """Store or overwrite a secret in the encrypted vault."""
+    _kein_internes(name)
     vault.secret_set(name, value, client="mcp")
     return f"stored {name!r}"
 
@@ -246,15 +265,25 @@ def _slug(text: str, fallback: str) -> str:
     return s or fallback
 
 
+_projekt_lock = threading.Lock()
+
+
 def _register_project(path: Path) -> bool:
-    """Ordner ins Nacht-Mapping eintragen (idempotent). True = war neu."""
-    entries = config.project_entries()
+    """Ordner ins Nacht-Mapping eintragen (idempotent). True = war neu.
+
+    Unter der Sperre, weil Lesen–Anhängen–Schreiben sonst Einträge verliert: Legen zwei
+    Clients gleichzeitig eine Notiz in je einem neuen Projekt an, lesen beide dieselbe
+    Liste und der Zweite schreibt den Ersten wieder weg — sein Projekt würde nachts
+    nie gemappt.
+    """
     home = str(Path.home())
-    stored = "~" + str(path)[len(home):] if str(path).startswith(home) else str(path)
-    if any(str(Path(e["path"]).expanduser()) == str(path) for e in entries):
-        return False
-    entries.append({"path": stored, "enabled": True})
-    config.save_projects(entries)
+    stored = "~" + str(path)[len(home) :] if str(path).startswith(home) else str(path)
+    with _projekt_lock:
+        entries = config.project_entries()
+        if any(str(Path(e["path"]).expanduser()) == str(path) for e in entries):
+            return False
+        entries.append({"path": stored, "enabled": True})
+        config.save_projects(entries)
     return True
 
 
@@ -266,17 +295,28 @@ def _write_note(project: str, title: str, content: str, tags: list[str] | None) 
     folder.mkdir(parents=True, exist_ok=True)
     neu = _register_project(folder)
     stamp = time.strftime("%Y-%m-%d")
-    name = f"{stamp}-{_slug(title, 'notiz')}.md"
-    f = folder / name
-    n = 2
-    while f.exists():                       # gleicher Titel am selben Tag -> nummerieren
-        f = folder / f"{stamp}-{_slug(title, 'notiz')}-{n}.md"
-        n += 1
+    basis = _slug(title, "notiz")
     kopf = [f"# {title.strip()}", ""]
     meta = [f"*Gespeichert am {time.strftime('%Y-%m-%d %H:%M')} aus einem Claude-Chat.*"]
     if tags:
         meta.append("Tags: " + ", ".join(str(t).strip() for t in tags if str(t).strip()))
-    f.write_text("\n".join(kopf + meta + ["", content.strip(), ""]), encoding="utf-8")
+    text = "\n".join(kopf + meta + ["", content.strip(), ""])
+
+    # Gleicher Titel am selben Tag -> durchnummerieren. Das Anlegen MUSS exklusiv sein
+    # (O_EXCL): Ein `while f.exists()` davor ist ein Prüfen-dann-Schreiben — speichern
+    # zwei Clients gleichzeitig eine Notiz mit demselben Titel, sehen beide dieselbe
+    # freie Nummer, und die zweite überschreibt die erste spurlos.
+    for n in range(1, 1000):
+        f = folder / (f"{stamp}-{basis}.md" if n == 1 else f"{stamp}-{basis}-{n}.md")
+        try:
+            fd = os.open(f, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            continue
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        break
+    else:
+        raise RuntimeError(f"zu viele Notizen mit dem Titel {title!r} an einem Tag")
     vault.audit("NOTE-SAVE", f"{pslug}/{f.name}", client="mcp")
     return f, neu
 
@@ -293,8 +333,10 @@ def note_save(project: str, title: str, content: str, tags: list[str] | None = N
     """
     f, neu = _write_note(project, title, content, tags)
     hinweis = " New project registered for nightly mapping (03:30)." if neu else ""
-    return (f"saved {f.name} in project {f.parent.name!r}.{hinweis} "
-            f"It enters the knowledge graph on the next mapping run.")
+    return (
+        f"saved {f.name} in project {f.parent.name!r}.{hinweis} "
+        f"It enters the knowledge graph on the next mapping run."
+    )
 
 
 @mcp.tool
@@ -323,13 +365,16 @@ def project_create(name: str, description: str = "") -> str:
         readme.write_text(f"# {name.strip()}\n\n{description.strip()}\n", encoding="utf-8")
     neu = _register_project(folder)
     vault.audit("PROJECT-CREATE", pslug, client="mcp")
-    return (f"project {pslug!r} {'created and registered' if neu else 'already existed'} "
-            f"at {folder}. Save knowledge into it with note_save.")
+    return (
+        f"project {pslug!r} {'created and registered' if neu else 'already existed'} "
+        f"at {folder}. Save knowledge into it with note_save."
+    )
 
 
 @mcp.tool
 def secret_delete(name: str) -> str:
     """Delete a secret from the vault."""
+    _kein_internes(name)
     return f"deleted {name!r}" if vault.secret_delete(name, client="mcp") else f"{name!r} did not exist"
 
 
@@ -359,8 +404,12 @@ class BearerGate:
         # Das Favicon an der Wurzel: Connector-Listen (ChatGPT, Browser-Tabs) fragen es
         # zuerst ab. Hinter der Schranke lieferte es 401 — der Client bekam nie ein Bild
         # und zeigte einen Platzhalter. Ein Icon ist kein Geheimnis.
-        if path in ("/favicon.ico", "/favicon.png", "/apple-touch-icon.png",
-                    "/apple-touch-icon-precomposed.png"):
+        if path in (
+            "/favicon.ico",
+            "/favicon.png",
+            "/apple-touch-icon.png",
+            "/apple-touch-icon-precomposed.png",
+        ):
             await ui.ui_app(scope, receive, send)
             return
         headers = dict(scope.get("headers") or [])
@@ -384,9 +433,9 @@ class BearerGate:
                 import setup_wizard
 
                 if setup_wizard.is_configured() and path != "/ui/setup/status":
-                    await JSONResponse(
-                        {"error": "System ist bereits eingerichtet"}, status_code=409
-                    )(scope, receive, send)
+                    await JSONResponse({"error": "System ist bereits eingerichtet"}, status_code=409)(
+                        scope, receive, send
+                    )
                     return
                 open_ui = True
             if open_ui or authorized:

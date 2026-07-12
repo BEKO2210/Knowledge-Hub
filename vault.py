@@ -28,10 +28,15 @@ v1-Vaults werden beim ersten Zugriff automatisch migriert (mit Sicherheitskopie)
 from __future__ import annotations
 
 import base64
+import fcntl
 import json
 import os
+import re
 import secrets
+import tempfile
+import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -39,16 +44,30 @@ from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 
 VAULT_PATH = Path(os.environ.get("VAULT_PATH", str(Path.home() / "knowledge-mcp" / "vault.enc")))
 AUDIT_PATH = VAULT_PATH.with_name("audit.log")
+LOCK_PATH = VAULT_PATH.with_name("vault.lock")
 
-_AAD = b"knowledge-mcp:vault:v1"          # v1-Daten (Migration)
-_AAD_DATA = b"knowledge-hub:vault:data"   # v2-Nutzdaten
-_AAD_WRAP = b"knowledge-hub:vault:wrap"   # v2-Schlüsselverpackung
+# Interne Secrets: gehören der Anwendung, nicht dem Nutzer. Der 2FA-Seed ist das
+# zweite Anmeldemerkmal — wer ihn lesen kann, umgeht die Zwei-Faktor-Anmeldung; wer
+# ihn löschen kann, schaltet sie ab. Weder das eine noch das andere darf über einen
+# verbundenen KI-Client gehen. Die Oberfläche verbarg ihn schon, die MCP-Werkzeuge nicht.
+HIDDEN_SECRETS = {"__2fa__"}
+
+# Erlaubte Secret-Namen. Die Regel stand bisher nur in der Weboberfläche — über MCP ließ
+# sich „böse/../name@!" ablegen, was danach in der Oberfläche nicht mehr löschbar war
+# (der Name steckt dort im Pfad). Jetzt gilt sie für jeden Weg in den Vault.
+SECRET_NAME_RE = re.compile(r"^[\w.\- ]{1,64}$")
+
+_RLOCK = threading.RLock()
+
+_AAD = b"knowledge-mcp:vault:v1"  # v1-Daten (Migration)
+_AAD_DATA = b"knowledge-hub:vault:data"  # v2-Nutzdaten
+_AAD_WRAP = b"knowledge-hub:vault:wrap"  # v2-Schlüsselverpackung
 
 # scrypt: bewusst teuer (~100 ms, 64 MB) — macht Rateangriffe auf das Passwort unattraktiv.
 SCRYPT_N, SCRYPT_R, SCRYPT_P = 2**16, 8, 1
 
-_b64 = lambda b: base64.b64encode(b).decode()          # noqa: E731
-_unb64 = lambda s: base64.b64decode(s)                 # noqa: E731
+_b64 = lambda b: base64.b64encode(b).decode()  # noqa: E731
+_unb64 = lambda s: base64.b64decode(s)  # noqa: E731
 
 # Der entpackte Hauptschlüssel lebt nur im Arbeitsspeicher.
 _mk: bytes | None = None
@@ -91,14 +110,54 @@ def _read_file() -> dict | None:
     raw = VAULT_PATH.read_bytes()
     if raw[:1] == b"{":
         return json.loads(raw)
-    return {"version": 1, "raw": raw}      # altes Format
+    return {"version": 1, "raw": raw}  # altes Format
 
 
 def _write_file(doc: dict) -> None:
-    tmp = VAULT_PATH.with_suffix(".tmp")
-    tmp.write_text(json.dumps(doc, indent=1))
-    tmp.chmod(0o600)
-    tmp.replace(VAULT_PATH)
+    """Vault atomar ersetzen.
+
+    Die Zwischendatei bekommt einen EIGENEN Namen pro Schreibvorgang. Vorher hieß sie
+    immer „vault.tmp": Schrieben zwei Aufrufe gleichzeitig (zwei MCP-Clients, Oberfläche
+    + Nacht-Job), benutzten beide dieselbe Datei — der Schnellere schob sie mit replace()
+    weg, der Langsamere fiel danach über ein `FileNotFoundError: vault.tmp` und sein
+    Secret war verloren. Ein eindeutiger Name pro Schreibvorgang kann nicht kollidieren.
+    """
+    fd, pfad = tempfile.mkstemp(dir=VAULT_PATH.parent, prefix=".vault-", suffix=".tmp")
+    tmp = Path(pfad)
+    try:
+        with os.fdopen(fd, "w") as fh:
+            json.dump(doc, fh, indent=1)
+            fh.flush()
+            os.fsync(fh.fileno())  # erst auf die Platte, dann umbenennen
+        tmp.chmod(0o600)
+        os.replace(tmp, VAULT_PATH)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
+@contextmanager
+def _transaktion():
+    """Eine Änderung am Vault: Lesen, Ändern, Schreiben — ohne dass jemand dazwischenfunkt.
+
+    Zwei Sperren, weil es zwei Arten von Nebenläufigkeit gibt:
+      * `_RLOCK` hält gleichzeitige Anfragen im selben Prozess auseinander (mehrere
+        MCP-Clients, Oberfläche und Werkzeug gleichzeitig).
+      * die Dateisperre hält andere PROZESSE auseinander (der Nacht-Job, ein zweiter
+        Serverstart, `backup.py`). Ein Thread-Lock allein hilft dort nicht.
+
+    Ohne das ging bei parallelen Aufrufen die letzte Änderung verloren: Alle lasen
+    denselben Stand, alle schrieben ihren eigenen zurück, und wer zuletzt schrieb,
+    löschte die Secrets der anderen.
+    """
+    with _RLOCK:
+        LOCK_PATH.touch(exist_ok=True)
+        with LOCK_PATH.open("r+") as fh:
+            fcntl.flock(fh, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(fh, fcntl.LOCK_UN)
 
 
 def _new_vault(password: str, mk: bytes | None = None, secrets_map: dict | None = None) -> dict:
@@ -110,14 +169,17 @@ def _new_vault(password: str, mk: bytes | None = None, secrets_map: dict | None 
         "created": int(time.time()),
         "wraps": {
             "password": {
-                "salt": _b64(salt), "n": SCRYPT_N, "r": SCRYPT_R, "p": SCRYPT_P,
+                "salt": _b64(salt),
+                "n": SCRYPT_N,
+                "r": SCRYPT_R,
+                "p": SCRYPT_P,
                 **_wrap(_derive(password, salt), mk),
             }
         },
     }
     ek = _env_key()
     if ek:
-        doc["wraps"]["env"] = _wrap(ek, mk)   # unbeaufsichtigter Betrieb bleibt möglich
+        doc["wraps"]["env"] = _wrap(ek, mk)  # unbeaufsichtigter Betrieb bleibt möglich
     _write_data(doc, mk, secrets_map or {})
     return doc
 
@@ -186,9 +248,13 @@ def unlock(password: str) -> bool:
         w = doc["wraps"].get("password")
         if not w:
             return False
-        key = Scrypt(salt=_unb64(w["salt"]), length=32,
-                     n=w.get("n", SCRYPT_N), r=w.get("r", SCRYPT_R), p=w.get("p", SCRYPT_P)
-                     ).derive(password.encode())
+        key = Scrypt(
+            salt=_unb64(w["salt"]),
+            length=32,
+            n=w.get("n", SCRYPT_N),
+            r=w.get("r", SCRYPT_R),
+            p=w.get("p", SCRYPT_P),
+        ).derive(password.encode())
         _mk = _unwrap(key, w)
         return True
     except Exception:  # noqa: BLE001 - falsches Passwort, kaputte Datei
@@ -247,7 +313,7 @@ def verify_password(password: str) -> bool:
     keep = _mk
     ok = unlock(password)
     if not ok:
-        globals()["_mk"] = keep      # Zustand nicht zerstören
+        globals()["_mk"] = keep  # Zustand nicht zerstören
     return ok
 
 
@@ -284,10 +350,13 @@ def change_password(old: str, new: str) -> bool:
             return False
         mk = _mk or _key()
     else:
-        mk = _key()          # Vault ohne Passwort-Verpackung (migriert ohne Passwort)
+        mk = _key()  # Vault ohne Passwort-Verpackung (migriert ohne Passwort)
     salt = secrets.token_bytes(16)
     doc["wraps"]["password"] = {
-        "salt": _b64(salt), "n": SCRYPT_N, "r": SCRYPT_R, "p": SCRYPT_P,
+        "salt": _b64(salt),
+        "n": SCRYPT_N,
+        "r": SCRYPT_R,
+        "p": SCRYPT_P,
         **_wrap(_derive(new, salt), mk),
     }
     _write_file(doc)
@@ -344,28 +413,37 @@ def _save(store: dict[str, str]) -> None:
 
 
 def secret_set(name: str, value: str, client: str = "-") -> None:
-    store = _load()
-    store[name] = value
-    _save(store)
+    if not SECRET_NAME_RE.match(name):
+        raise ValueError(
+            "Ungültiger Name — erlaubt sind Buchstaben, Ziffern, Punkt, "
+            "Bindestrich, Unterstrich und Leerzeichen (1–64 Zeichen)."
+        )
+    with _transaktion():
+        store = _load()
+        store[name] = value
+        _save(store)
     audit("SET", name, client)
 
 
 def secret_get(name: str, client: str = "-") -> str | None:
-    store = _load()
+    with _transaktion():
+        store = _load()
     audit("GET" if name in store else "GET-MISS", name, client)
     return store.get(name)
 
 
 def secret_list(client: str = "-") -> list[str]:
-    store = _load()
+    with _transaktion():
+        store = _load()
     audit("LIST", f"({len(store)} entries)", client)
     return sorted(store)
 
 
 def secret_delete(name: str, client: str = "-") -> bool:
-    store = _load()
-    existed = name in store
-    store.pop(name, None)
-    _save(store)
+    with _transaktion():
+        store = _load()
+        existed = name in store
+        store.pop(name, None)
+        _save(store)
     audit("DELETE" if existed else "DELETE-MISS", name, client)
     return existed

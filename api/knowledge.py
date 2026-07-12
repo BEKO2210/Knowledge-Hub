@@ -80,9 +80,7 @@ async def report(request: Request) -> JSONResponse:
     if name not in _projects():
         return JSONResponse({"error": "unknown project"}, status_code=404)
     path = KNOWLEDGE_ROOT / name / "graphify-out" / "GRAPH_REPORT.md"
-    return JSONResponse(
-        {"markdown": path.read_text() if path.exists() else T("(kein Report vorhanden)")}
-    )
+    return JSONResponse({"markdown": path.read_text() if path.exists() else T("(kein Report vorhanden)")})
 
 
 # ---------------------------------------------------------------------------
@@ -133,9 +131,20 @@ def _ins_graph_gedaechtnis(projekt: str, art: str, frage: str, antwort: str) -> 
     """Antwort in graphify-out/memory/ ablegen — der Rückkanal für `graphify reflect`."""
     try:
         subprocess.run(  # noqa: S603 - fester Binary, geprüftes Projekt
-            [GRAPHIFY_BIN, "save-result", "--question", frage[:500],
-             "--answer", antwort[:4000], "--type", art],
-            cwd=KNOWLEDGE_ROOT / projekt, capture_output=True, timeout=20, check=False,
+            [
+                GRAPHIFY_BIN,
+                "save-result",
+                "--question",
+                frage[:500],
+                "--answer",
+                antwort[:4000],
+                "--type",
+                art,
+            ],
+            cwd=KNOWLEDGE_ROOT / projekt,
+            capture_output=True,
+            timeout=20,
+            check=False,
         )
     except Exception:  # noqa: BLE001 - reine Zugabe, darf nie die Antwort verhindern
         pass
@@ -154,13 +163,15 @@ async def antworten_liste(request: Request) -> JSONResponse:
                 d = json.loads(f.read_text())
             except Exception:  # noqa: BLE001
                 continue
-            out.append({
-                "art": "explain" if f.name.startswith("explain") else "query",
-                "frage": d.get("frage", ""),
-                "text": (d.get("text") or d.get("answer") or "")[:400],
-                "modell": d.get("model", ""),
-                "gespeichert": d.get("gespeichert"),
-            })
+            out.append(
+                {
+                    "art": "explain" if f.name.startswith("explain") else "query",
+                    "frage": d.get("frage", ""),
+                    "text": (d.get("text") or d.get("answer") or "")[:400],
+                    "modell": d.get("model", ""),
+                    "gespeichert": d.get("gespeichert"),
+                }
+            )
     out.sort(key=lambda x: x.get("gespeichert") or 0, reverse=True)
     return JSONResponse({"items": out[:100]})
 
@@ -198,9 +209,11 @@ async def explain(request: Request) -> JSONResponse:
             {
                 "text": context,
                 "source": "graph",
-                "note": T("Kein {backend}-Key hinterlegt — hier stehen nur die Rohdaten aus dem "
-                          "Graphen. Key im Mapping-Tab eintragen für eine echte Erklärung.",
-                          backend=backend.get("label", backend_name)),
+                "note": T(
+                    "Kein {backend}-Key hinterlegt — hier stehen nur die Rohdaten aus dem "
+                    "Graphen. Key im Mapping-Tab eintragen für eine echte Erklärung.",
+                    backend=backend.get("label", backend_name),
+                ),
             }
         )
     # Schon einmal erklärt? Dann nicht noch einmal bezahlen.
@@ -223,16 +236,21 @@ async def explain(request: Request) -> JSONResponse:
             {"text": context, "source": "graph", "note": T("KI nicht verfügbar: {msg}", msg=e)}
         )
     vault.audit("EXPLAIN", f"{name}/{node}", client="web-ui")
-    ergebnis = {"text": answer, "source": "llm", "model": model,
-                "backend": backend.get("label", backend_name)}
+    ergebnis = {
+        "text": answer,
+        "source": "llm",
+        "model": model,
+        "backend": backend.get("label", backend_name),
+    }
     _antwort_schreiben(name, "explain", node, model, ergebnis)
     await asyncio.to_thread(_ins_graph_gedaechtnis, name, "explain", node, answer)
     return JSONResponse({**ergebnis, "context": context})
 
 
 # Interne Secrets (2FA-Zustand u. Ä.) tauchen nicht in der Secrets-Verwaltung auf —
-# sie sind kein Nutzer-Key und dürfen nicht gelöscht/ausgelesen werden.
-HIDDEN_SECRETS = {"__2fa__"}
+# sie sind kein Nutzer-Key und dürfen nicht gelöscht/ausgelesen werden. Die Liste steht
+# in vault.py: sie muss für JEDEN Weg in den Vault gelten, nicht nur für die Oberfläche.
+HIDDEN_SECRETS = vault.HIDDEN_SECRETS
 
 
 _CITE_RE = re.compile(r"NODE (.+?) \[src=(.+?) loc=(\S+)")
@@ -268,7 +286,10 @@ async def graph_ask(request: Request) -> JSONResponse:
     def graphify_query(q: str) -> str:
         return subprocess.run(  # noqa: S603 - fester Binary, geprüftes Projekt
             [GRAPHIFY_BIN, "query", q, "--budget", "1500"],
-            cwd=KNOWLEDGE_ROOT / name, capture_output=True, text=True, timeout=60,
+            cwd=KNOWLEDGE_ROOT / name,
+            capture_output=True,
+            text=True,
+            timeout=60,
         ).stdout.strip()
 
     cfg = config.load()
@@ -287,7 +308,12 @@ async def graph_ask(request: Request) -> JSONResponse:
 
         try:
             kw = await asyncio.to_thread(
-                _llm.ask, backend, model, key, _llm.KEYWORDS_SYSTEM, _llm.keywords_prompt(question),
+                _llm.ask,
+                backend,
+                model,
+                key,
+                _llm.KEYWORDS_SYSTEM,
+                _llm.keywords_prompt(question),
             )
             terms = [t.strip() for t in kw.replace("\n", ",").split(",") if t.strip()][:6]
             for term in terms:
@@ -299,19 +325,29 @@ async def graph_ask(request: Request) -> JSONResponse:
 
     sources = _extract_sources(context)
     if not context or "No matching nodes" in context:
-        return JSONResponse({
-            "answer": T("Zu dieser Frage habe ich im Graphen nichts gefunden. Versuch es mit anderen "
-                        "Begriffen — am besten mit Namen aus dem Code (Funktionen, Dateien, Konzepte)."),
-            "source": "graph", "sources": [],
-        })
+        return JSONResponse(
+            {
+                "answer": T(
+                    "Zu dieser Frage habe ich im Graphen nichts gefunden. Versuch es mit anderen "
+                    "Begriffen — am besten mit Namen aus dem Code (Funktionen, Dateien, Konzepte)."
+                ),
+                "source": "graph",
+                "sources": [],
+            }
+        )
 
     # 2. KI-Antwort mit Belegen
     if secret and not key:
-        return JSONResponse({
-            "answer": T("Kein KI-Key hinterlegt — hier sind nur die passenden Stellen aus dem "
-                        "Graphen. Für eine formulierte Antwort einen Key im Mapping-Tab eintragen."),
-            "source": "graph", "sources": sources,
-        })
+        return JSONResponse(
+            {
+                "answer": T(
+                    "Kein KI-Key hinterlegt — hier sind nur die passenden Stellen aus dem "
+                    "Graphen. Für eine formulierte Antwort einen Key im Mapping-Tab eintragen."
+                ),
+                "source": "graph",
+                "sources": sources,
+            }
+        )
     # Dieselbe Frage schon einmal beantwortet? Antwort aus dem Speicher.
     if not str(body.get("fresh", "")):
         alt = _antwort_lesen(name, "query", question, model)
@@ -320,15 +356,24 @@ async def graph_ask(request: Request) -> JSONResponse:
 
     try:
         answer = await asyncio.to_thread(
-            llm.ask, backend, model, key or "",
-            llm.QUERY_SYSTEM, llm.query_prompt(name, question, context),
+            llm.ask,
+            backend,
+            model,
+            key or "",
+            llm.QUERY_SYSTEM,
+            llm.query_prompt(name, question, context),
         )
     except llm.LLMError as e:
-        return JSONResponse({"answer": T("KI nicht verfügbar: {msg}", msg=e),
-                             "source": "graph", "sources": sources})
+        return JSONResponse(
+            {"answer": T("KI nicht verfügbar: {msg}", msg=e), "source": "graph", "sources": sources}
+        )
     vault.audit("QUERY", f"{name}: {question[:60]}", client="web-ui")
-    ergebnis = {"answer": answer, "source": "llm", "model": model,
-                "backend": backend.get("label", backend_name)}
+    ergebnis = {
+        "answer": answer,
+        "source": "llm",
+        "model": model,
+        "backend": backend.get("label", backend_name),
+    }
     _antwort_schreiben(name, "query", question, model, ergebnis)
     await asyncio.to_thread(_ins_graph_gedaechtnis, name, "query", question, answer)
     return JSONResponse({**ergebnis, "sources": sources})

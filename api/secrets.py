@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import re
-
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
@@ -11,14 +9,14 @@ import vault
 from api.common import AUDIT_PATH
 from api.i18n import T
 
-HIDDEN_SECRETS = {"__2fa__"}
+# Eine Quelle für beide Wege in den Vault (Oberfläche UND MCP) — definiert in vault.py.
+# Vorher standen die Regeln nur hier: über MCP galten sie nicht.
+HIDDEN_SECRETS = vault.HIDDEN_SECRETS
+SECRET_NAME_RE = vault.SECRET_NAME_RE
 
 
 async def secrets_list(request: Request) -> JSONResponse:
     return JSONResponse([s for s in vault.secret_list(client="web-ui") if s not in HIDDEN_SECRETS])
-
-
-SECRET_NAME_RE = re.compile(r"^[\w.\- ]{1,64}$")
 
 
 async def secrets_set(request: Request) -> JSONResponse:
@@ -30,8 +28,12 @@ async def secrets_set(request: Request) -> JSONResponse:
     # Zeilenumbrüche, Pfadtrenner) wird abgelehnt.
     if not SECRET_NAME_RE.match(name):
         return JSONResponse(
-            {"error": T("Ungültiger Name — erlaubt sind Buchstaben, Ziffern, Punkt, Bindestrich, "
-                        "Unterstrich und Leerzeichen (max. 64 Zeichen).")},
+            {
+                "error": T(
+                    "Ungültiger Name — erlaubt sind Buchstaben, Ziffern, Punkt, Bindestrich, "
+                    "Unterstrich und Leerzeichen (max. 64 Zeichen)."
+                )
+            },
             status_code=400,
         )
     if len(value) > 20000:

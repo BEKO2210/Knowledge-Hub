@@ -19,11 +19,14 @@ from __future__ import annotations
 import copy
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 import yaml
 
-CONFIG_PATH = Path(os.environ.get("KNOWLEDGE_CONFIG", str(Path.home() / ".config" / "knowledge-mcp" / "config.yaml")))
+CONFIG_PATH = Path(
+    os.environ.get("KNOWLEDGE_CONFIG", str(Path.home() / ".config" / "knowledge-mcp" / "config.yaml"))
+)
 
 DEFAULTS: dict = {
     "server": {
@@ -97,14 +100,35 @@ _HEADER = (
 )
 
 
+def _schreibe_atomar(ziel: Path, text: str) -> None:
+    """Erst vollständig danebenschreiben, dann umbenennen.
+
+    write_text() schreibt an Ort und Stelle: Bricht der Vorgang mittendrin ab (Absturz,
+    voller Datenträger) oder liest jemand gleichzeitig, steht eine halbe YAML-Datei auf
+    der Platte — und der Hub startet danach ohne Konfiguration. os.replace() ist atomar:
+    entweder die alte Datei oder die neue, nie etwas dazwischen.
+    """
+    ziel.parent.mkdir(parents=True, exist_ok=True)
+    fd, pfad = tempfile.mkstemp(dir=ziel.parent, prefix=f".{ziel.name}-", suffix=".tmp")
+    tmp = Path(pfad)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, ziel)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
 def save_projects(project_entries: list[dict]) -> None:
     """Persistiert mapping.projects in config.yaml (Rest der Datei bleibt erhalten)."""
     data = {}
     if CONFIG_PATH.exists():
         data = yaml.safe_load(CONFIG_PATH.read_text()) or {}
     data.setdefault("mapping", {})["projects"] = project_entries
-    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    CONFIG_PATH.write_text(_HEADER + yaml.safe_dump(data, allow_unicode=True, sort_keys=False))
+    _schreibe_atomar(CONFIG_PATH, _HEADER + yaml.safe_dump(data, allow_unicode=True, sort_keys=False))
 
 
 def save_backup(targets: list[dict], cfg_path: Path | None = None) -> None:
