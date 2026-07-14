@@ -26,9 +26,9 @@ from starlette.responses import JSONResponse
 
 import config
 import graph_context
-import semantic
 import oauth
 import ratelimit
+import semantic
 import ui
 import vault
 

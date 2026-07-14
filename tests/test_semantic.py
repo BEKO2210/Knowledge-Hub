@@ -8,7 +8,7 @@ Tests offline und in Millisekunden laufen.
 from __future__ import annotations
 
 import json
-from pathlib import Path
+import pickle
 
 import numpy as np
 import pytest
@@ -138,7 +138,7 @@ def test_kaputter_index_wirft_und_stoert_query_nicht_dauerhaft(fake_model, proje
     semantic.build_index(out)
     idx = out / "graphify-out" / semantic.INDEX_NAME
     idx.write_bytes(b"kaputt")
-    with pytest.raises(Exception):
+    with pytest.raises(pickle.UnpicklingError):
         semantic.query(out, "vault", budget=400)
     # Selbstheilung: Graph anfassen → nächste Query baut neu und funktioniert
     graph = out / "graphify-out" / "graph.json"

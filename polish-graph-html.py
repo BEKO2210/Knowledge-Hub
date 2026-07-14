@@ -18,8 +18,8 @@ Usage: polish-graph-html.py <graph.html> [<graph.html> ...]
        polish-graph-html.py --all      # every enabled project's graph.html
 """
 
-import sys
 import pathlib
+import sys
 
 MARKER = "<!-- ee-polish v1 -->"
 
@@ -123,16 +123,10 @@ def polish(path: pathlib.Path) -> str:
 
     # 2. CSS + marker: just before </head> (or prepend if no head)
     inject_head = MARKER + CSS
-    if "</head>" in html:
-        html = html.replace("</head>", inject_head + "\n</head>", 1)
-    else:
-        html = inject_head + html
+    html = html.replace("</head>", inject_head + "\n</head>", 1) if "</head>" in html else inject_head + html
 
     # 3. JS: just before </body> (or append)
-    if "</body>" in html:
-        html = html.replace("</body>", JS + "\n</body>", 1)
-    else:
-        html = html + JS
+    html = html.replace("</body>", JS + "\n</body>", 1) if "</body>" in html else html + JS
 
     if html == original:
         return "no change (unexpected structure)"
