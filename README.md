@@ -76,7 +76,9 @@ It runs on **your** machine. No third party sees your code or your keys.
 
 ## Install
 
-**Requirements:** Linux, Python 3.12+, and [graphify](https://github.com/BEKO2210/graphify) to build the graphs.
+**Requirements:** Linux, Python 3.12+, and [graphifyy](https://pypi.org/project/graphifyy/) to build
+the graphs — a third-party graph engine ([MIT, by Safi Shamsi](https://github.com/safishamsi/graphify)).
+Knowledge Hub is the server, vault, scheduler and UI *around* it, not the engine itself.
 
 ```bash
 git clone https://github.com/BEKO2210/Knowledge-Hub.git
@@ -238,6 +240,10 @@ Code comments are in German.
 
 [AGPL-3.0](LICENSE). Self-host it, modify it, do as you like — but if you run a modified version
 **as a service for other people**, you have to publish your changes.
+
+The graph extraction itself is done by [graphifyy](https://github.com/safishamsi/graphify)
+(MIT, © Safi Shamsi) — Knowledge Hub drives it, secures it and puts a face on it, but does not
+claim it.
 
 ---
 

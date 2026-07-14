@@ -1,0 +1,10 @@
+# Minifizierte, vendored und generierte Dateien: verzerren den Graphen
+# (graphify liest zusätzlich .gitignore — hier steht nur, was dort fehlt).
+*.min.js
+*.min.css
+*.min.mjs
+*.map
+*.bundle.js
+*.chunk.js
+vendor/
+third_party/

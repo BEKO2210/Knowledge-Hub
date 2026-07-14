@@ -22,6 +22,20 @@ from api.i18n import T
 TIMER_FILE = Path.home() / ".config" / "systemd" / "user" / "nightly-map.timer"
 NIGHTLY_LOG_DIR = DATA_DIR / "build-logs"
 
+# Empfohlene Standard-Ausschlüsse: minifizierte, vendored und generierte Dateien
+# machen sonst die dichtesten Hub-Knoten des Graphen aus ($(), t(), *.min.js).
+# graphify liest .gitignore ohnehin mit — hier steht nur, was dort typisch fehlt.
+DEFAULT_IGNORE = """\
+*.min.js
+*.min.css
+*.min.mjs
+*.map
+*.bundle.js
+*.chunk.js
+vendor/
+third_party/
+"""
+
 TIMER_TEMPLATE = """[Unit]
 Description=Startet das nächtliche Deep-Mapping um {time}
 
@@ -104,6 +118,7 @@ _FAIL_RE = re.compile(r"FEHLGESCHLAGEN:?\s*(\S+)?")
 def _iso_secs(a: str, b: str) -> int | None:
     """Sekunden zwischen zwei ISO-Zeitstempeln (Dauer eines Laufs)."""
     from datetime import datetime
+
     try:
         return max(0, int((datetime.fromisoformat(b) - datetime.fromisoformat(a)).total_seconds()))
     except (ValueError, TypeError):
@@ -125,10 +140,19 @@ def _parse_runs() -> list[dict]:
         for line in lines:
             m = _RUN_START_RE.search(line)
             if m:
-                cur = {"start": m.group(1), "backend": m.group(2) or "", "model": m.group(3),
-                       "projects": [], "failed_names": [], "failures": [],
-                       "backup_failed": False, "cost": 0.0,
-                       "tokens_in": 0, "tokens_out": 0, "duration_s": None}
+                cur = {
+                    "start": m.group(1),
+                    "backend": m.group(2) or "",
+                    "model": m.group(3),
+                    "projects": [],
+                    "failed_names": [],
+                    "failures": [],
+                    "backup_failed": False,
+                    "cost": 0.0,
+                    "tokens_in": 0,
+                    "tokens_out": 0,
+                    "duration_s": None,
+                }
                 cur_proj = None
                 runs.append(cur)
                 continue
@@ -170,7 +194,7 @@ def _parse_runs() -> list[dict]:
                 fm = _FAIL_RE.search(line)
                 name = (fm.group(1) or "").rstrip("/").rsplit("/", 1)[-1] if fm else ""
                 if not name:
-                    continue                      # ohne Projektnamen ist es kein Projektfehler
+                    continue  # ohne Projektnamen ist es kein Projektfehler
                 art = "sync" if low.startswith("sync") else "extract"
                 cur["failed_names"].append(name)
                 cur["failures"].append({"project": name, "kind": art})
@@ -393,14 +417,15 @@ async def mapping_project_add(request: Request) -> JSONResponse:
     body = await request.json()
     p = _safe_dir(str(body.get("path", "")))
     if p is None:
-        return JSONResponse({"error": T("Kein gültiges Verzeichnis (erlaubt: Home und /opt)")},
-                            status_code=400)
+        return JSONResponse(
+            {"error": T("Kein gültiges Verzeichnis (erlaubt: Home und /opt)")}, status_code=400
+        )
     entries = config.project_entries()
     if str(p) in {str(Path(e["path"]).expanduser()) for e in entries}:
         return JSONResponse({"error": T("Projekt ist bereits eingetragen")}, status_code=409)
     # Home-Pfade lesbar mit ~ abspeichern
     home = str(Path.home())
-    stored = "~" + str(p)[len(home):] if str(p).startswith(home) else str(p)
+    stored = "~" + str(p)[len(home) :] if str(p).startswith(home) else str(p)
     entries.append({"path": stored, "enabled": True})
     config.save_projects(entries)
     vault.audit("PROJECT-ADD", stored, client="web-ui")
@@ -434,24 +459,48 @@ def _diagnose_project(p: Path) -> list[dict]:
     """Warum lässt sich dieses Projekt nicht mappen? Liefert Befunde + Reparierbarkeit."""
     out: list[dict] = []
     if not p.is_dir():
-        out.append({"problem": T("Der Ordner {path} existiert nicht.", path=p), "fixable": False,
-                    "fix": T("Projekt entfernen oder Pfad korrigieren.")})
+        out.append(
+            {
+                "problem": T("Der Ordner {path} existiert nicht.", path=p),
+                "fixable": False,
+                "fix": T("Projekt entfernen oder Pfad korrigieren."),
+            }
+        )
         return out
     if not (os.access(p, os.R_OK) and os.access(p, os.X_OK)):
-        out.append({"problem": T("Keine Leserechte auf {path}.", path=p), "fixable": False,
-                    "fix": T("Auf dem Server ausführen:  sudo setfacl -m u:{user}:rx {path}",
-                             user=getpass.getuser(), path=p)})
+        out.append(
+            {
+                "problem": T("Keine Leserechte auf {path}.", path=p),
+                "fixable": False,
+                "fix": T(
+                    "Auf dem Server ausführen:  sudo setfacl -m u:{user}:rx {path}",
+                    user=getpass.getuser(),
+                    path=p,
+                ),
+            }
+        )
         return out
     graph_out = p / "graphify-out"
     if not graph_out.exists():
-        out.append({"problem": T("Der Ausgabeordner graphify-out fehlt."), "fixable": True,
-                    "fix": T("Wird beim Reparieren angelegt.")})
+        out.append(
+            {
+                "problem": T("Der Ausgabeordner graphify-out fehlt."),
+                "fixable": True,
+                "fix": T("Wird beim Reparieren angelegt."),
+            }
+        )
     elif not os.access(graph_out, os.W_OK):
-        out.append({"problem": T("{path} ist nicht beschreibbar (gehört einem anderen Nutzer).",
-                                 path=graph_out),
-                    "fixable": False,
-                    "fix": T("Auf dem Server ausführen:  sudo chown -R {user} {path}",
-                             user=getpass.getuser(), path=graph_out)})
+        out.append(
+            {
+                "problem": T("{path} ist nicht beschreibbar (gehört einem anderen Nutzer).", path=graph_out),
+                "fixable": False,
+                "fix": T(
+                    "Auf dem Server ausführen:  sudo chown -R {user} {path}",
+                    user=getpass.getuser(),
+                    path=graph_out,
+                ),
+            }
+        )
     return out
 
 
@@ -462,11 +511,13 @@ async def project_check(request: Request) -> JSONResponse:
     if str(p) not in _project_paths():
         return JSONResponse({"error": T("Projekt nicht konfiguriert")}, status_code=404)
     issues = _diagnose_project(p)
-    return JSONResponse({
-        "ok": not issues,
-        "issues": issues,
-        "repairable": all(i["fixable"] for i in issues) if issues else True,
-    })
+    return JSONResponse(
+        {
+            "ok": not issues,
+            "issues": issues,
+            "repairable": all(i["fixable"] for i in issues) if issues else True,
+        }
+    )
 
 
 _repairs: dict[str, dict] = {}
@@ -493,26 +544,49 @@ def _repair_worker(name: str, p: Path, cfg: dict) -> None:
         secret = backend.get("secret")
         key = vault.secret_get(secret, client="web-ui") if secret else ""
         env = dict(os.environ)
-        args = [GRAPHIFY_BIN, "extract", str(p), "--backend", backend_name,
-                "--model", model, "--api-timeout", str(cfg["mapping"].get("api_timeout", 300))]
+        args = [
+            GRAPHIFY_BIN,
+            "extract",
+            str(p),
+            "--backend",
+            backend_name,
+            "--model",
+            model,
+            "--api-timeout",
+            str(cfg["mapping"].get("api_timeout", 300)),
+        ]
         if secret and key:
             env[backend["env"]] = key
         elif secret:
             args.append("--code-only")
             lines.append(T("Kein API-Key hinterlegt — es wird nur Code gemappt (ohne Dokumente)."))
 
-        lines.append(T("Mappe {name} neu ({backend} · {model})…",
-                       name=p.name, backend=backend.get("label", backend_name), model=model))
+        lines.append(
+            T(
+                "Mappe {name} neu ({backend} · {model})…",
+                name=p.name,
+                backend=backend.get("label", backend_name),
+                model=model,
+            )
+        )
         proc = subprocess.run(  # noqa: S603 - feste Binary, geprüfter Pfad, Listenargumente
-            args, capture_output=True, text=True, timeout=1800, env=env,
+            args,
+            capture_output=True,
+            text=True,
+            timeout=1800,
+            env=env,
         )
         tail = (proc.stdout or proc.stderr).strip().splitlines()[-12:]
         lines += tail
         if proc.returncode != 0:
             _repairs[name] = {"status": "failed", "log": "\n".join(lines)}
             return
-        subprocess.run([config.path(cfg["paths"]["graphify_sync"]), str(p)],  # noqa: S603
-                       capture_output=True, text=True, timeout=300)
+        subprocess.run(
+            [config.path(cfg["paths"]["graphify_sync"]), str(p)],  # noqa: S603
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
         lines.append(T("✓ Reparatur erfolgreich — Projekt ist wieder gemappt."))
         _repairs[name] = {"status": "done", "log": "\n".join(lines)}
     except Exception as e:  # noqa: BLE001
@@ -553,9 +627,7 @@ async def browse_dirs(request: Request) -> JSONResponse:
             dirs.append(child.name)
     except PermissionError:
         pass
-    parent = str(p.parent) if any(
-        p != root and p.is_relative_to(root) for root in BROWSE_ROOTS
-    ) else None
+    parent = str(p.parent) if any(p != root and p.is_relative_to(root) for root in BROWSE_ROOTS) else None
     roots = [str(r) for r in BROWSE_ROOTS]
     return JSONResponse({"path": str(p), "parent": parent, "dirs": dirs[:200], "roots": roots})
 
@@ -565,7 +637,12 @@ async def ignore_get(request: Request) -> JSONResponse:
     if p is None:
         return JSONResponse({"error": T("Projekt nicht gefunden")}, status_code=404)
     f = Path(p["path"]).expanduser() / ".graphifyignore"
-    return JSONResponse({"content": f.read_text() if f.is_file() else ""})
+    return JSONResponse(
+        {
+            "content": f.read_text() if f.is_file() else "",
+            "default": DEFAULT_IGNORE,
+        }
+    )
 
 
 async def ignore_put(request: Request) -> JSONResponse:
