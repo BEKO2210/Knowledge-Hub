@@ -181,6 +181,8 @@ def test_build_worker_nutzt_nachtlauf_pipeline(monkeypatch, tmp_path):
 
     projekt = tmp_path / "miniprojekt"
     projekt.mkdir()
+    (projekt / "graphify-out").mkdir()
+    (projekt / "graphify-out" / "graph.json").write_text('{"nodes": [{"id": "a"}], "links": []}')
     befehle: list[list[str]] = []
 
     def fake_run(cmd, **kwargs):
@@ -212,6 +214,8 @@ def test_build_worker_faellt_bei_extraktionsfehler_auf_graphify_zurueck(monkeypa
 
     projekt = tmp_path / "kaputt"
     projekt.mkdir()
+    (projekt / "graphify-out").mkdir()
+    (projekt / "graphify-out" / "graph.json").write_text('{"nodes": [{"id": "a"}], "links": []}')
     befehle: list[list[str]] = []
 
     def fake_run(cmd, **kwargs):

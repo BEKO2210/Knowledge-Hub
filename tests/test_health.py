@@ -66,6 +66,7 @@ def test_deep_listet_alle_checks_ohne_interne_pfade(client, auth):
         "mcp_tools",
         "assets",
         "migrationen",
+        "generationen",
     }
     assert erwartet <= namen, f"fehlende Checks: {erwartet - namen}"
     # Kein Check-Detail darf absolute Serverpfade oder Secret-Werte enthalten

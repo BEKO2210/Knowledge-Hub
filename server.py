@@ -277,6 +277,15 @@ def _build_worker(name: str, path: Path) -> None:
                 if not run_step([GRAPHIFY_BIN, "update", str(path)], log):
                     grund = f"{fehler_extraktion}; Fallback ebenso: {letzter_fehler}"
                     return
+            # Build-Vertrag: erst wenn das Manifest die Generation bindet, darf gesynct werden.
+            try:
+                import buildmeta
+
+                m = buildmeta.write_manifest(path)
+                log.write(f"build-manifest: {m['build_id']} {m['counts']}\n")
+            except Exception as e:  # noqa: BLE001 - ohne Manifest keine Veröffentlichung
+                grund = f"Build-Manifest fehlgeschlagen: {type(e).__name__}: {e}"
+                return
             if not run_step([GRAPHIFY_SYNC, str(path)], log):
                 grund = letzter_fehler
                 return
@@ -543,7 +552,7 @@ class BearerGate:
             )
             return
         if path == "/healthz/deep" and authorized:
-            ok, checks = await health.ready(mcp)
+            ok, checks = await health.ready(mcp, deep=True)
             await JSONResponse({"status": "ready" if ok else "unready", "checks": checks})(
                 scope, receive, send
             )

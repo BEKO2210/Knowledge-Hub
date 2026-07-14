@@ -46,10 +46,19 @@ def _warte_auf_ende(name: str, sekunden: float = 20.0) -> dict:
 # Zeitüberschreitung, volle Platte), starb der Thread still. Der Status blieb auf
 # „running“ — und graph_build weigerte sich ab da FÜR IMMER, dieses Projekt zu bauen
 # („build is already running“). Nur ein Serverneustart holte es zurück.
+def _mini_graph(projekt_dir):
+    """Seit dem Build-Vertrag (Run 7) gehört zu einem erfolgreichen Lauf eine graph.json —
+    ohne sie ist ein Build zu Recht 'failed'. Erfolgs-Szenarien brauchen daher eine."""
+    out = projekt_dir / "graphify-out"
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "graph.json").write_text('{"nodes": [{"id": "a"}], "links": []}', encoding="utf-8")
+
+
 def test_fehlendes_werkzeug_endet_als_failed(monkeypatch, tmp_path):
     monkeypatch.setattr(server, "GRAPHIFY_BIN", "/bin/true")
     monkeypatch.setattr(server, "GRAPHIFY_SYNC", str(TMP / "gibt-es-nicht"))
     monkeypatch.setattr(server, "BUILD_LOG_DIR", tmp_path / "logs")
+    _mini_graph(tmp_path)
 
     server._builds["p"] = {"status": "running", "started": 0, "finished": None}
     server._build_worker("p", tmp_path)
@@ -99,12 +108,30 @@ def test_erfolgreicher_lauf_endet_als_done(monkeypatch, tmp_path):
     monkeypatch.setattr(server, "GRAPHIFY_BIN", "/bin/true")
     monkeypatch.setattr(server, "GRAPHIFY_SYNC", "/bin/true")
     monkeypatch.setattr(server, "BUILD_LOG_DIR", tmp_path / "logs")
+    _mini_graph(tmp_path)
 
     server._builds["p"] = {"status": "running", "started": 0, "finished": None}
     server._build_worker("p", tmp_path)
 
     assert server._builds["p"]["status"] == "done"
     assert server._builds["p"]["error"] is None
+    # Build-Vertrag: ein erfolgreicher Lauf hinterlässt ein konsistentes Manifest
+    import buildmeta
+
+    assert buildmeta.verify(tmp_path)["status"] == "ok"
+
+
+def test_lauf_ohne_graph_endet_als_failed_mit_manifestgrund(monkeypatch, tmp_path):
+    """Kein graph.json = keine Generation = kein Erfolg (Invariante aus Kap. 7)."""
+    monkeypatch.setattr(server, "GRAPHIFY_BIN", "/bin/true")
+    monkeypatch.setattr(server, "GRAPHIFY_SYNC", "/bin/true")
+    monkeypatch.setattr(server, "BUILD_LOG_DIR", tmp_path / "logs")
+
+    server._builds["p"] = {"status": "running", "started": 0, "finished": None}
+    server._build_worker("p", tmp_path)
+
+    assert server._builds["p"]["status"] == "failed"
+    assert "Build-Manifest" in (server._builds["p"].get("error") or "")
 
 
 # ---------------------------------------------------------------------------

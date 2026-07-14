@@ -124,7 +124,28 @@ def _check_migrationen() -> tuple[bool, str]:
     return True, f"Vault-Dokumentversion {version} bekannt"
 
 
-async def checks(mcp=None) -> list[dict]:
+def _check_generationen() -> tuple[bool, str]:
+    """Deep-only: Graph, Report, Viewer und Index müssen je Projekt EINE Generation bilden."""
+    import buildmeta
+
+    mismatch, legacy, ok = [], 0, 0
+    for name in _projects():
+        pfad = KNOWLEDGE_ROOT / name
+        if not (pfad / "graphify-out" / "graph.json").exists():
+            continue
+        v = buildmeta.verify(pfad)
+        if v["status"] == "mismatch":
+            mismatch.append(f"{name}: {v['detail']}")
+        elif v["status"] == "legacy":
+            legacy += 1
+        else:
+            ok += 1
+    if mismatch:
+        return False, " | ".join(mismatch)
+    return True, f"{ok} konsistent, {legacy} legacy (vor Vertragseinführung)"
+
+
+async def checks(mcp=None, deep: bool = False) -> list[dict]:
     """Alle Readiness-Checks mit Einzelbefund. Ein Check, der selbst wirft, ist ein Befund."""
     tool_names: set[str] | None = None
     if mcp is not None:
@@ -134,8 +155,7 @@ async def checks(mcp=None) -> list[dict]:
         except Exception:  # noqa: BLE001 - jeder Fehler hier IST das Ergebnis des Checks
             tool_names = None
 
-    ergebnisse = []
-    for name, fn in (
+    pruefungen: list[tuple] = [
         ("config", _check_config),
         ("datenpfade", _check_datenpfade),
         ("vault", _check_vault),
@@ -144,7 +164,13 @@ async def checks(mcp=None) -> list[dict]:
         ("mcp_tools", lambda: _check_mcp_tools(tool_names)),
         ("assets", _check_assets),
         ("migrationen", _check_migrationen),
-    ):
+    ]
+    if deep:
+        # Hash-Verifikation aller Generationen ist zu teuer für jede Readiness-Probe —
+        # sie gehört in die Deep-Sicht (und in die Kandidaten-Gates vor einem Switch).
+        pruefungen.append(("generationen", _check_generationen))
+    ergebnisse = []
+    for name, fn in pruefungen:
         try:
             ok, detail = fn()
         except Exception as e:  # noqa: BLE001 - Absturz eines Checks = unready, kein 500
@@ -153,6 +179,6 @@ async def checks(mcp=None) -> list[dict]:
     return ergebnisse
 
 
-async def ready(mcp=None) -> tuple[bool, list[dict]]:
-    ergebnisse = await checks(mcp)
+async def ready(mcp=None, deep: bool = False) -> tuple[bool, list[dict]]:
+    ergebnisse = await checks(mcp, deep=deep)
     return all(c["ok"] for c in ergebnisse), ergebnisse

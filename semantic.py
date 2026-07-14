@@ -105,6 +105,10 @@ def build_index(project_dir: Path) -> int:
     vecs /= np.linalg.norm(vecs, axis=1, keepdims=True) + 1e-9
     ids = np.array([n.get("id") or n.get("label") for n in nodes], dtype=object)
     np.savez_compressed(project_dir / "graphify-out" / INDEX_NAME, vecs=vecs, ids=ids)
+    # Generation festhalten: der Index gehört zu genau diesem Graph-Stand (Build-Vertrag).
+    import buildmeta
+
+    buildmeta.write_index_meta(project_dir)
     return len(nodes)
 
 

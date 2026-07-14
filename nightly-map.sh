@@ -101,6 +101,9 @@ for p in "${PROJECTS[@]}"; do
       || echo "label fehlgeschlagen: $p (Bereiche bleiben unbenannt)"
   fi
 
+  # Build-Vertrag: Manifest bindet graph/report/viewer an EINE Generation (hub-audit Run 7).
+  "$PY" "$HUB/buildmeta.py" write "$p" || echo "PROBLEM: build-manifest fehlgeschlagen: $p"
+
   "$GRAPHIFY_SYNC" "$p" || echo "sync fehlgeschlagen: $p"
 done
 
