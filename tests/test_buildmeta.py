@@ -101,3 +101,79 @@ def test_index_meta_wird_beim_indexbau_geschrieben(projekt, monkeypatch):
     manifest = json.loads((projekt / "graphify-out" / buildmeta.BUILD_MANIFEST).read_text())
     assert meta["build_id"] == manifest["build_id"]
     assert buildmeta.verify(projekt)["status"] == "ok"
+
+
+# --- Run 8: atomare Veröffentlichung — Snapshot, Validierung, Wiederherstellung -------
+
+
+def test_validate_erkennt_kaputte_referenzen(projekt):
+    out = projekt / "graphify-out"
+    g = json.loads((out / "graph.json").read_text())
+    g["links"].append({"source": "a", "target": "GIBT-ES-NICHT"})
+    (out / "graph.json").write_text(json.dumps(g))
+    probleme = buildmeta.validate_graph(projekt)
+    assert any("GIBT-ES-NICHT" in p for p in probleme), probleme
+
+
+def test_validate_erkennt_doppelte_ids(projekt):
+    out = projekt / "graphify-out"
+    g = json.loads((out / "graph.json").read_text())
+    g["nodes"].append({"id": "a", "community": 5})
+    (out / "graph.json").write_text(json.dumps(g))
+    probleme = buildmeta.validate_graph(projekt)
+    assert any("doppelt" in p.lower() for p in probleme), probleme
+
+
+def test_snapshot_und_restore_stellen_generation_wieder_her(projekt):
+    buildmeta.write_manifest(projekt)
+    out = projekt / "graphify-out"
+    alt = (out / "graph.json").read_bytes()
+    assert buildmeta.snapshot_generation(projekt)
+    # »Build« zerstört die Generation
+    (out / "graph.json").write_text("kaputt {")
+    (out / "GRAPH_REPORT.md").write_text("halbfertig")
+    assert buildmeta.restore_generation(projekt)
+    assert (out / "graph.json").read_bytes() == alt
+    assert buildmeta.verify(projekt)["status"] == "ok"
+
+
+def test_finalize_verweigert_ungueltige_generation(projekt):
+    out = projekt / "graphify-out"
+    g = json.loads((out / "graph.json").read_text())
+    g["links"].append({"source": "a", "target": "NIRGENDS"})
+    (out / "graph.json").write_text(json.dumps(g))
+    with pytest.raises(ValueError):
+        buildmeta.finalize(projekt)
+    assert not (out / buildmeta.BUILD_MANIFEST).exists()  # kein Manifest für Müll
+
+
+def test_worker_stellt_alte_generation_bei_fehlschlag_wieder_her(monkeypatch, tmp_path):
+    """Cluster-Schritt scheitert → der Build endet failed UND der alte Stand ist zurück."""
+    import server
+
+    projekt = tmp_path / "p"
+    out = projekt / "graphify-out"
+    out.mkdir(parents=True)
+    (out / "graph.json").write_text('{"nodes": [{"id": "alt"}], "links": []}')
+    buildmeta.write_manifest(projekt)
+    alt = (out / "graph.json").read_bytes()
+
+    def fake_run(cmd, **kwargs):
+        class P:
+            returncode = 0
+
+        flach = " ".join(str(c) for c in cmd)
+        if "extraction.py" in flach:
+            (out / "graph.json").write_text('{"nodes": [{"id": "halb"}]')  # kaputt geschrieben
+        if "cluster-only" in flach:
+            P.returncode = 1
+        return P()
+
+    monkeypatch.setattr(server.subprocess, "run", fake_run)
+    monkeypatch.setattr(server, "BUILD_LOG_DIR", tmp_path / "logs")
+    server._builds["p"] = {"status": "running", "started": 0, "finished": None}
+    server._build_worker("p", projekt)
+
+    assert server._builds["p"]["status"] == "failed"
+    assert (out / "graph.json").read_bytes() == alt, "alter Graph muss unversehrt zurück sein"
+    assert buildmeta.verify(projekt)["status"] == "ok"

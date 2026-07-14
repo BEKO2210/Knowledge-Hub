@@ -131,7 +131,8 @@ def test_lauf_ohne_graph_endet_als_failed_mit_manifestgrund(monkeypatch, tmp_pat
     server._build_worker("p", tmp_path)
 
     assert server._builds["p"]["status"] == "failed"
-    assert "Build-Manifest" in (server._builds["p"].get("error") or "")
+    assert "Generation" in (server._builds["p"].get("error") or "")
+    assert "graph.json fehlt" in (server._builds["p"].get("error") or "")
 
 
 # ---------------------------------------------------------------------------

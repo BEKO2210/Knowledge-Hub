@@ -78,18 +78,27 @@ for p in "${PROJECTS[@]}"; do
     continue
   fi
   [ -n "$msg" ] && echo "$msg"
+  # Atomare Veröffentlichung (Run 8): aktuelle Generation sichern, bevor der Build sie anfasst.
+  "$PY" "$HUB/buildmeta.py" snapshot "$p" >/dev/null 2>&1 || true
   # Eigene Extraktion (extraction.py) ist seit 2026-07-14 der Standard: inkrementell
   # (Datei-Hash-Cache, unveränderte Dateien kosten keinen LLM-Aufruf) und mit voller
   # Coverage (Compose, Configs, Docs — Benchmark: Lumo 3/3 statt 0/3). Clustering,
   # Report und graph.html liefert danach graphify cluster-only aus unserer graph.json.
   # Schlägt die eigene Extraktion fehl, übernimmt das klassische graphify extract.
   if [ ${#EXTRA_ARGS[@]} -eq 0 ] && "$PY" "$HUB/extraction.py" "$p"; then
-    "$GRAPHIFY" cluster-only "$p" --no-label || echo "cluster-only fehlgeschlagen: $p"
+    if ! "$GRAPHIFY" cluster-only "$p" --no-label; then
+      echo "cluster-only fehlgeschlagen: $p — stelle vorherige Generation wieder her"
+      "$PY" "$HUB/buildmeta.py" restore "$p" || echo "PROBLEM: restore fehlgeschlagen: $p"
+      continue
+    fi
   else
     echo "eigene Extraktion nicht möglich — Fallback auf graphify extract: $p"
-    "$GRAPHIFY" extract "$p" \
-      --backend "$BACKEND" --model "$MODEL" --api-timeout "$API_TIMEOUT" "${EXTRA_ARGS[@]}" \
-      || { echo "extract FEHLGESCHLAGEN: $p"; continue; }
+    if ! "$GRAPHIFY" extract "$p" \
+      --backend "$BACKEND" --model "$MODEL" --api-timeout "$API_TIMEOUT" "${EXTRA_ARGS[@]}"; then
+      echo "extract FEHLGESCHLAGEN: $p — stelle vorherige Generation wieder her"
+      "$PY" "$HUB/buildmeta.py" restore "$p" || echo "PROBLEM: restore fehlgeschlagen: $p"
+      continue
+    fi
   fi
 
   # Bereiche benennen. OHNE diesen Schritt heißen alle neuen Bereiche in der Oberfläche
@@ -101,8 +110,13 @@ for p in "${PROJECTS[@]}"; do
       || echo "label fehlgeschlagen: $p (Bereiche bleiben unbenannt)"
   fi
 
-  # Build-Vertrag: Manifest bindet graph/report/viewer an EINE Generation (hub-audit Run 7).
-  "$PY" "$HUB/buildmeta.py" write "$p" || echo "PROBLEM: build-manifest fehlgeschlagen: $p"
+  # Abnahme-Gate (Run 7+8): nur eine VALIDIERTE Generation bekommt ein Manifest und wird
+  # veröffentlicht; ungültige Stände werden verworfen und die vorherige Generation kehrt zurück.
+  if ! "$PY" "$HUB/buildmeta.py" finalize "$p"; then
+    echo "Generation ABGELEHNT: $p — stelle vorherige wieder her"
+    "$PY" "$HUB/buildmeta.py" restore "$p" || echo "PROBLEM: restore fehlgeschlagen: $p"
+    continue
+  fi
 
   "$GRAPHIFY_SYNC" "$p" || echo "sync fehlgeschlagen: $p"
 done

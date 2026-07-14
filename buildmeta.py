@@ -132,6 +132,84 @@ def write_index_meta(project_dir: Path) -> dict | None:
     return meta
 
 
+SNAPSHOT_DIR = ".prev-generation"
+_SNAPSHOT_FILES = (*_ARTIFACTS, BUILD_MANIFEST, INDEX_META, "semantic-index.npz")
+
+
+def validate_graph(project_dir: Path) -> list[str]:
+    """Invarianten aus GESAMTAUFTRAG Kap. 7 — Rückgabe: Liste der Probleme (leer = gültig)."""
+    out = Path(project_dir) / "graphify-out"
+    try:
+        g = json.loads((out / "graph.json").read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return ["graph.json fehlt"]
+    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+        return [f"graph.json ist kein gültiges JSON ({type(e).__name__})"]
+    probleme: list[str] = []
+    nodes = g.get("nodes")
+    if not isinstance(nodes, list):
+        return ["nodes ist keine Liste"]
+    ids: set[str] = set()
+    for n in nodes:
+        nid = n.get("id")
+        if nid in ids:
+            probleme.append(f"Knoten-ID doppelt: {nid!r}")
+        if nid is not None:
+            ids.add(nid)
+    for e in g.get("links", g.get("edges", [])):
+        for ende in (e.get("source"), e.get("target")):
+            if ende not in ids:
+                probleme.append(f"Kante referenziert fehlenden Knoten: {ende!r}")
+    return probleme
+
+
+def snapshot_generation(project_dir: Path) -> bool:
+    """Sichert die aktuelle Generation nach graphify-out/.prev-generation/ (vor einem Build)."""
+    import shutil
+
+    out = Path(project_dir) / "graphify-out"
+    if not (out / "graph.json").is_file():
+        return False  # nichts zu sichern (Erstbuild)
+    snap = out / SNAPSHOT_DIR
+    tmp = out / (SNAPSHOT_DIR + ".tmp")
+    shutil.rmtree(tmp, ignore_errors=True)
+    tmp.mkdir()
+    for name in _SNAPSHOT_FILES:
+        f = out / name
+        if f.is_file():
+            shutil.copy2(f, tmp / name)
+    shutil.rmtree(snap, ignore_errors=True)
+    os.replace(tmp, snap)
+    return True
+
+
+def restore_generation(project_dir: Path) -> bool:
+    """Stellt die zuletzt gesicherte Generation wieder her (nach einem fehlgeschlagenen Build)."""
+    import shutil
+
+    out = Path(project_dir) / "graphify-out"
+    snap = out / SNAPSHOT_DIR
+    if not (snap / "graph.json").is_file():
+        return False
+    for name in _SNAPSHOT_FILES:
+        s = snap / name
+        ziel = out / name
+        if s.is_file():
+            shutil.copy2(s, out / (name + ".restore-tmp"))
+            os.replace(out / (name + ".restore-tmp"), ziel)
+        elif ziel.is_file():
+            ziel.unlink()  # gehörte nicht zur alten Generation
+    return True
+
+
+def finalize(project_dir: Path) -> dict:
+    """Abnahme-Gate: Nur eine GÜLTIGE Generation bekommt ein Manifest (sonst ValueError)."""
+    probleme = validate_graph(project_dir)
+    if probleme:
+        raise ValueError("Generation ungültig: " + "; ".join(probleme[:5]))
+    return write_manifest(project_dir)
+
+
 def verify(project_dir: Path) -> dict:
     """Prüft die Generationskonsistenz. status: ok | legacy | mismatch."""
     out = Path(project_dir) / "graphify-out"
@@ -174,13 +252,32 @@ def verify(project_dir: Path) -> dict:
 
 
 def main() -> int:
-    if len(sys.argv) != 3 or sys.argv[1] not in ("write", "verify"):
+    if len(sys.argv) != 3 or sys.argv[1] not in ("write", "verify", "snapshot", "restore", "finalize"):
         print(__doc__)
         return 64
-    project = Path(sys.argv[2]).expanduser()
-    if sys.argv[1] == "write":
+    cmd, project = sys.argv[1], Path(sys.argv[2]).expanduser()
+    if cmd == "write":
         m = write_manifest(project)
         print(f"build-manifest.json: {m['build_id']} ({m['counts']})")
+        return 0
+    if cmd == "snapshot":
+        print(
+            "Snapshot: " + ("gesichert" if snapshot_generation(project) else "nichts zu sichern (Erstbuild)")
+        )
+        return 0
+    if cmd == "restore":
+        if restore_generation(project):
+            print("vorherige Generation wiederhergestellt")
+            return 0
+        print("kein Snapshot vorhanden — nichts wiederhergestellt")
+        return 66
+    if cmd == "finalize":
+        try:
+            m = finalize(project)
+        except ValueError as e:
+            print(f"ABGELEHNT: {e}")
+            return 65
+        print(f"Generation abgenommen: {m['build_id']} ({m['counts']})")
         return 0
     v = verify(project)
     print(f"{v['status']}: {v['detail']}")

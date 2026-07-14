@@ -253,7 +253,20 @@ def _build_worker(name: str, path: Path) -> None:
                 return False
             return True
 
+        import buildmeta
+
         with log_file.open("w") as log:
+
+            def scheitere(text: str) -> str:
+                """Fehlgeschlagener Build: alte Generation zurück, Grund ans Statusfeld."""
+                if buildmeta.restore_generation(path):
+                    log.write("!! vorherige Generation wiederhergestellt (.prev-generation)\n")
+                return text
+
+            # Atomare Veröffentlichung (Run 8): Erst die aktuelle Generation sichern —
+            # ein Build, der mittendrin stirbt, darf den gesunden Graphen nicht ersetzen.
+            if buildmeta.snapshot_generation(path):
+                log.write("Snapshot der aktuellen Generation: .prev-generation/\n")
             eigene = run_step(
                 [
                     str(Path(__file__).parent / ".venv" / "bin" / "python")
@@ -266,7 +279,7 @@ def _build_worker(name: str, path: Path) -> None:
             )
             if eigene:
                 if not run_step([GRAPHIFY_BIN, "cluster-only", str(path), "--no-label"], log):
-                    grund = letzter_fehler
+                    grund = scheitere(letzter_fehler)
                     return
                 if label_args and not run_step(label_args, log):
                     log.write("!! Benennung fehlgeschlagen — Bereiche bleiben unbenannt (nicht fatal)\n")
@@ -275,17 +288,18 @@ def _build_worker(name: str, path: Path) -> None:
                 fehler_extraktion = letzter_fehler
                 log.write("!! eigene Extraktion fehlgeschlagen — Fallback auf graphify update\n")
                 if not run_step([GRAPHIFY_BIN, "update", str(path)], log):
-                    grund = f"{fehler_extraktion}; Fallback ebenso: {letzter_fehler}"
+                    grund = scheitere(f"{fehler_extraktion}; Fallback ebenso: {letzter_fehler}")
                     return
-            # Build-Vertrag: erst wenn das Manifest die Generation bindet, darf gesynct werden.
+            # Abnahme-Gate: nur eine validierte Generation bekommt ein Manifest und darf
+            # veröffentlicht werden (Schema, Referenzen, Duplikate — Kap. 7).
             try:
-                import buildmeta
-
-                m = buildmeta.write_manifest(path)
-                log.write(f"build-manifest: {m['build_id']} {m['counts']}\n")
-            except Exception as e:  # noqa: BLE001 - ohne Manifest keine Veröffentlichung
-                grund = f"Build-Manifest fehlgeschlagen: {type(e).__name__}: {e}"
+                m = buildmeta.finalize(path)
+                log.write(f"Generation abgenommen: {m['build_id']} {m['counts']}\n")
+            except Exception as e:  # noqa: BLE001 - ungültige Generation wird verworfen
+                grund = scheitere(f"Generation abgelehnt: {e}")
                 return
+            # Sync-Fehler restauriert NICHT: die neue Generation ist gültig und abgenommen,
+            # nur die Veröffentlichung zur Hub-Kopie steht aus (nächster Lauf holt sie nach).
             if not run_step([GRAPHIFY_SYNC, str(path)], log):
                 grund = letzter_fehler
                 return
