@@ -34,3 +34,5 @@ node_modules/
 
 # Interne Planung: enthält Geschäftsplanung und persönliche Daten — bleibt privat
 ROADMAP.md
+chunk-index/
+.coverage

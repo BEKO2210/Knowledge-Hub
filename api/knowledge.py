@@ -15,6 +15,7 @@ from starlette.responses import JSONResponse
 
 import config
 import graph_context
+import semantic
 import vault
 from api.common import DATA_DIR, GRAPHIFY_BIN, KNOWLEDGE_ROOT, _projects
 from api.i18n import T
@@ -290,13 +291,26 @@ async def graph_ask(request: Request) -> JSONResponse:
         return JSONResponse({"error": T("Bitte eine Frage eingeben.")}, status_code=400)
 
     def graphify_query(q: str) -> str:
-        raw = subprocess.run(  # noqa: S603 - fester Binary, geprüftes Projekt
-            [GRAPHIFY_BIN, "query", q, "--budget", "1500"],
-            cwd=KNOWLEDGE_ROOT / name,
-            capture_output=True,
-            text=True,
-            timeout=60,
-        ).stdout.strip()
+        # Dreistufige Kette wie im MCP-graph_query: Hybrid → Graph → graphify-CLI
+        try:
+            src = None
+            for e in config.project_entries():
+                p = Path(e["path"]).expanduser()
+                if p.name.lower() == name.lower() and p.is_dir():
+                    src = p
+                    break
+            raw = semantic.hybrid_query(KNOWLEDGE_ROOT / name, q, budget=1500, source_dir=src)
+        except Exception:
+            try:
+                raw = semantic.query(KNOWLEDGE_ROOT / name, q, budget=1500)
+            except Exception:
+                raw = subprocess.run(  # noqa: S603 - fester Binary, geprüftes Projekt
+                    [GRAPHIFY_BIN, "query", q, "--budget", "1500"],
+                    cwd=KNOWLEDGE_ROOT / name,
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                ).stdout.strip()
         return graph_context.anreichern(KNOWLEDGE_ROOT / name, raw)
 
     cfg = config.load()

@@ -15,7 +15,7 @@ without you ever pasting a credential into a chat window.
 [![CI](https://github.com/BEKO2210/Knowledge-Hub/actions/workflows/ci.yml/badge.svg)](https://github.com/BEKO2210/Knowledge-Hub/actions/workflows/ci.yml)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 [![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/tests-99%20passing-22c55e)](tests/)
+[![Tests](https://img.shields.io/badge/tests-132%20passing-22c55e)](tests/)
 [![MCP](https://img.shields.io/badge/MCP-OAuth_2.1%20%2B%20PKCE-8b5cf6)](https://modelcontextprotocol.io)
 [![Self-hosted](https://img.shields.io/badge/self--hosted-your%20server%2C%20your%20data-0ea5e9)](#install)
 
@@ -47,6 +47,7 @@ It runs on **your** machine. No third party sees your code or your keys.
 |  |  |
 |---|---|
 | 🕸️ **Knowledge graphs** | Every project becomes a graph: hub nodes, clusters, relations. Click a node to see what it touches, or ask for the shortest path between two concepts. |
+| 🎯 **Hybrid retrieval** | `graph_query` embeds your question with a local multilingual model (CPU, offline) and answers with graph structure *plus* the most relevant raw file excerpts. Benchmarked at **96 % hit rate** where lexical graph lookup scored 46 % — see [Benchmarks](#benchmarks). |
 | 🔐 **Encrypted vault** | AES-256-GCM. The master key is wrapped twice — once by your password, once by a machine key — so the hub can survive a reboot unattended, while the file on disk stays useless without one of them. |
 | 🤖 **A real MCP server** | Streamable HTTP, OAuth 2.1 + PKCE with dynamic client registration. Connect Claude with a URL — no token copy-paste. |
 | 🌙 **Nightly mapping** | A timer re-maps every project while you sleep, incrementally: unchanged files cost nothing. Cost, duration and node growth per run are shown in the UI. |
@@ -87,7 +88,8 @@ cd Knowledge-Hub
 ```
 
 The installer creates a virtualenv, generates your keys, installs a systemd user service plus the
-nightly timer, and opens a **setup wizard** in your browser. It asks for a password, which projects
+nightly timer, and opens a **setup wizard** in your browser. On its first query the hybrid engine
+downloads a local embedding model once (~470 MB); after that, retrieval is fully offline. It asks for a password, which projects
 to map, and which AI provider to use for the semantic pass. That's it.
 
 <details>
@@ -130,7 +132,7 @@ can be revoked with one click; the token dies instantly.
 | Tool | What it does |
 |---|---|
 | `projects_list` | Every mapped project, with node, edge and cluster counts |
-| `graph_query` | Answers a question by traversing a project's graph |
+| `graph_query` | Answers a question with hybrid retrieval: semantic graph traversal plus the most relevant file excerpts, in one context |
 | `graph_explain` | Explains one node in plain language |
 | `graph_path` | Shortest path between two concepts |
 | `graph_build` | Maps (or re-maps) a project on demand |
@@ -159,17 +161,45 @@ can be revoked with one click; the token dies instantly.
                             └────────────────────────────────────┘
                                │              │              │
                   ┌────────────▼───┐  ┌───────▼──────┐  ┌────▼───────────┐
-                  │ graphify       │  │ vault.enc    │  │ nightly timer  │
-                  │ graph.json     │  │ AES-256-GCM  │  │ (systemd)      │
-                  │ per project    │  │ double-wrap  │  │ incremental    │
+                  │ semantic.py    │  │ vault.enc    │  │ nightly timer  │
+                  │ hybrid engine: │  │ AES-256-GCM  │  │ (systemd)      │
+                  │ graph + chunks │  │ double-wrap  │  │ incremental    │
                   └────────────────┘  └──────────────┘  └────────────────┘
 ```
+
+**Retrieval, specifically.** `semantic.py` is the hub's own engine: a local multilingual embedding
+model (fastembed/ONNX, runs on CPU, downloads once, then fully offline) picks graph entry points by
+*meaning* instead of substring, walks the graph, and blends in the most relevant raw file excerpts.
+Every index is self-healing — missing or stale, it rebuilds; a missing chunk index never blocks a
+request (the answer degrades to graph-only while the index builds in the background). If the engine
+fails entirely, `graph_query` falls back to the classic graphify CLI. Three layers, no dead ends.
 
 **The vault, specifically.** A random 256-bit master key encrypts your secrets. That master key is
 then wrapped twice: once with `scrypt(your password)`, once with a machine key from the environment.
 Changing your password re-wraps the master key — it never re-encrypts anything, so it can never lose
 your secrets. Turn the machine wrap off and the hub stays locked until a human signs in; leave it on
 and the nightly job fetches its own API key at 03:30 without waking you.
+
+---
+
+## Benchmarks
+
+Retrieval quality is measured, not claimed: a suite of gold questions with objectively known
+answers, scored by exact match on the retrieved context, identical token budget and hardware for
+every engine. It runs locally with zero LLM cost, and every run is stored as JSON.
+
+| Engine | Hit rate @ 400 tokens | @ 1,200 tokens |
+|---|---|---|
+| Lexical graph lookup (graphify) | 42 % | 46 % |
+| Semantic graph engine (ours) | 65 % | 65 % |
+| RAG full-text chunks (ours) | 54 % | 96 % |
+| **Hybrid — what `graph_query` ships** | **69 %** | **96 %** |
+
+Why hybrid: graph structure is cheap per token (wins tight budgets), raw file excerpts carry the
+literal facts (win large budgets). The hybrid splits every budget between both and wins twice.
+
+Full report with per-project results, methodology and the misses we publish alongside the hits:
+**[hub.it-handwerk-stuttgart.de/benchmarks.html](https://hub.it-handwerk-stuttgart.de/benchmarks.html)**
 
 ---
 
@@ -212,7 +242,7 @@ inconvenient to admit.
 pip install -r requirements-dev.txt
 playwright install chromium
 
-pytest          # 99 tests: unit, HTTP, and end-to-end in a real browser
+pytest          # 132 tests: unit, HTTP, retrieval engine, and end-to-end in a real browser
 ruff check .    # lint
 ./deploy.sh     # test, roll out — and roll back if the hub stops answering
 ```
@@ -223,12 +253,13 @@ in, create a secret, reveal it, delete it, switch theme and language, and check 
 doesn't break at 390 px or 1280 px.
 
 ```
-api/       the endpoints, by topic (auth · knowledge · secrets · mapping · system)
-web/       index.html, app.css, app.js — no build step, no bundler
-ui.py      the web layer: assets, security headers, routes
-vault.py   encryption
-oauth.py   OAuth 2.1 + PKCE
-tests/     99 of them
+api/         the endpoints, by topic (auth · knowledge · secrets · mapping · system)
+web/         index.html, app.css, app.js — no build step, no bundler
+ui.py        the web layer: assets, security headers, routes
+semantic.py  the hybrid retrieval engine: embeddings, graph traversal, file chunks
+vault.py     encryption
+oauth.py     OAuth 2.1 + PKCE
+tests/       132 of them
 ```
 
 The interface is English by default and German at the flick of a switch (top right).
@@ -241,9 +272,9 @@ Code comments are in German.
 [AGPL-3.0](LICENSE). Self-host it, modify it, do as you like — but if you run a modified version
 **as a service for other people**, you have to publish your changes.
 
-The graph extraction itself is done by [graphifyy](https://github.com/safishamsi/graphify)
-(MIT, © Safi Shamsi) — Knowledge Hub drives it, secures it and puts a face on it, but does not
-claim it.
+Graph extraction is done by [graphifyy](https://github.com/safishamsi/graphify)
+(MIT, © Safi Shamsi); retrieval is Knowledge Hub's own hybrid engine (`semantic.py`), with the
+graphify CLI kept as a fallback. Credit where it is due, independence where it matters.
 
 ---
 

@@ -6,6 +6,7 @@ import getpass
 import json
 import os
 import re
+import shutil
 import subprocess
 import threading
 from pathlib import Path
@@ -15,7 +16,7 @@ from starlette.responses import JSONResponse
 
 import config
 import vault
-from api.common import DATA_DIR, GRAPHIFY_BIN
+from api.common import DATA_DIR, GRAPHIFY_BIN, KNOWLEDGE_ROOT
 from api.i18n import T
 
 # ---------------------------------------------------------------------------
@@ -432,18 +433,72 @@ async def mapping_project_add(request: Request) -> JSONResponse:
     return JSONResponse({"ok": True})
 
 
+# Ordner im Wissens-Repo, die nie einem Projekt gehören — dürfen beim Purge nicht fallen
+RESERVED_GRAPH_DIRS = {"hub-backups", "_claude"}
+
+
+def _git_purge_commit(name: str) -> None:
+    """Löschung im Wissens-Repo festhalten und pushen — best effort wie graphify-sync."""
+    try:
+
+        def git(*args: str) -> subprocess.CompletedProcess:
+            return subprocess.run(  # noqa: S603 - fixed binary, list args
+                ["git", *args], cwd=KNOWLEDGE_ROOT, capture_output=True, text=True, timeout=60
+            )
+
+        git("add", "-A")
+        if git("diff", "--cached", "--quiet").returncode != 0:
+            git("commit", "-q", "-m", f"graph purge: {name}")
+            git("push", "-q", "origin", "main")
+    except Exception:
+        pass  # Repo-Sync darf das Entfernen nie blockieren
+
+
+def _purge_graph_data(project_dir: Path) -> list[str]:
+    """Löscht ALLE Graph-Artefakte eines Projekts: Hub-Kopie, lokales graphify-out, Antworten.
+
+    Der Projektordner selbst (Quellcode, Notizen) bleibt unangetastet.
+    """
+    removed: list[str] = []
+    name = project_dir.name.lower()
+    if not name or name in RESERVED_GRAPH_DIRS:
+        return removed
+
+    # 1) Hub-Kopie im Wissens-Repo — das, was MCP-Tools und der Graphen-Tab servieren
+    hub_copy = KNOWLEDGE_ROOT / name
+    if hub_copy.is_dir() and hub_copy.resolve().parent == KNOWLEDGE_ROOT.resolve():
+        shutil.rmtree(hub_copy)
+        removed.append(str(hub_copy))
+        _git_purge_commit(name)
+
+    # 2) Lokale Graph-Daten im Projektordner
+    local_out = project_dir / "graphify-out"
+    if local_out.is_dir() and not local_out.is_symlink():
+        shutil.rmtree(local_out)
+        removed.append(str(local_out))
+
+    # 3) Gespeicherte Antworten zu diesem Projekt
+    answers = DATA_DIR / "answers" / name
+    if answers.is_dir():
+        shutil.rmtree(answers)
+        removed.append(str(answers))
+
+    return removed
+
+
 async def mapping_project_update(request: Request) -> JSONResponse:
-    """Toggle enabled oder Projekt entfernen."""
+    """Toggle enabled oder Projekt entfernen (entfernen = Graph-Daten komplett löschen)."""
     body = await request.json()
     target = str(body.get("path", ""))
     action = str(body.get("action", ""))
     entries = config.project_entries()
     resolved = str(Path(target).expanduser())
-    kept, found = [], False
+    kept, found, purged = [], False, []
     for e in entries:
         if str(Path(e["path"]).expanduser()) == resolved:
             found = True
             if action == "remove":
+                purged = _purge_graph_data(Path(e["path"]).expanduser())
                 continue
             if action == "toggle":
                 e["enabled"] = not e["enabled"]
@@ -452,7 +507,9 @@ async def mapping_project_update(request: Request) -> JSONResponse:
         return JSONResponse({"error": T("Projekt nicht gefunden")}, status_code=404)
     config.save_projects(kept)
     vault.audit(f"PROJECT-{action.upper()}", target, client="web-ui")
-    return JSONResponse({"ok": True})
+    if action == "remove":
+        vault.audit("GRAPH-PURGE", "; ".join(purged) or "keine Graph-Daten vorhanden", client="web-ui")
+    return JSONResponse({"ok": True, "purged": purged})
 
 
 def _diagnose_project(p: Path) -> list[dict]:

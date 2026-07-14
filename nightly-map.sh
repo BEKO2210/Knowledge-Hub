@@ -94,6 +94,29 @@ for p in "${PROJECTS[@]}"; do
   "$GRAPHIFY_SYNC" "$p" || echo "sync fehlgeschlagen: $p"
 done
 
+# Semantische Indizes für den neuen Stand neu bauen (lokal, kostenlos).
+# graph_query prüft mtime und heilt sich zwar selbst, aber so zahlt kein
+# Nutzer-Request die Index-Baukosten.
+echo "--- Semantik-Index ($(date -Is))"
+"$PY" - <<'PYEOF' || echo "Semantik-Index fehlgeschlagen (graph_query baut ihn bei Bedarf selbst)"
+import sys
+sys.path.insert(0, "/home/belkis/knowledge-mcp")
+from pathlib import Path
+import config
+import semantic
+root = Path.home() / "graphify-knowledge"
+sources = {}
+for e in config.project_entries():
+    p = Path(e["path"]).expanduser()
+    sources[p.name.lower()] = p
+for d in sorted(root.iterdir()):
+    if (d / "graphify-out" / "graph.json").exists():
+        n = semantic.build_index(d)
+        src = sources.get(d.name)
+        c = semantic.build_chunk_index(d.name, src) if src and src.is_dir() else 0
+        print(f"{d.name}: {n} Knoten, {c} Chunks indiziert")
+PYEOF
+
 # Verschlüsselte Sicherung (Vault + Schlüssel + Konfiguration) an alle Ziele.
 # Läuft am Ende, damit die frischen Stände mit erfasst sind.
 if [ -n "${BACKUP_PASSPHRASE:-}" ]; then

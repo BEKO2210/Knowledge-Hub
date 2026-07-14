@@ -26,6 +26,7 @@ from starlette.responses import JSONResponse
 
 import config
 import graph_context
+import semantic
 import oauth
 import ratelimit
 import ui
@@ -113,10 +114,34 @@ def _run_graphify(project: str, args: list[str]) -> str:
     return proc.stdout.strip()
 
 
+def _source_dir(project: str) -> Path | None:
+    """Quellverzeichnis eines Projekts aus der Mapping-Config (für den Hybrid-Modus)."""
+    try:
+        for e in config.project_entries():
+            p = Path(e["path"]).expanduser()
+            if p.name.lower() == project.lower():
+                return p if p.is_dir() else None
+    except Exception:  # noqa: BLE001 - Hybrid ist Zugabe, Config-Probleme dürfen nichts kippen
+        pass
+    return None
+
+
 @mcp.tool
 def graph_query(project: str, question: str, budget_tokens: int = 1200) -> str:
-    """Answer a question about a project's codebase from its knowledge graph (BFS traversal)."""
-    raw = _run_graphify(project, ["query", question, "--budget", str(budget_tokens)])
+    """Answer a question about a project's codebase (hybrid: knowledge graph + relevant file excerpts)."""
+    if project not in _projects():
+        raise ValueError(f"unknown project {project!r}; known: {_projects()}")
+    # Dreistufige Kette: Hybrid → semantischer Graph → graphify-CLI.
+    # graph_query darf nie an einem fehlenden Index oder Modell scheitern.
+    try:
+        raw = semantic.hybrid_query(
+            KNOWLEDGE_ROOT / project, question, budget=budget_tokens, source_dir=_source_dir(project)
+        )
+    except Exception:
+        try:
+            raw = semantic.query(KNOWLEDGE_ROOT / project, question, budget=budget_tokens)
+        except Exception:
+            raw = _run_graphify(project, ["query", question, "--budget", str(budget_tokens)])
     return graph_context.anreichern(KNOWLEDGE_ROOT / project, raw)
 
 

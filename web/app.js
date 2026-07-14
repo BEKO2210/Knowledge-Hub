@@ -48,7 +48,7 @@ const EN = {
   /* Allgemeine Rückmeldungen */
   'Gespeichert: {name}': 'Saved: {name}',
   'Gelöscht: {name}': 'Deleted: {name}',
-  'Entfernt: {name}': 'Removed: {name}',
+  'Komplett entfernt: {name}': 'Completely removed: {name}',
   'Kopiert': 'Copied',
   'Kopieren': 'Copy',
   'Kopieren nicht möglich': 'Could not copy',
@@ -121,7 +121,7 @@ const EN = {
   'Das lässt sich nur direkt auf dem Server beheben — Befehl oben.': 'This can only be fixed directly on the server — see the command above.',
   '{name} vom Nacht-Lauf ausgenommen': '{name} excluded from the nightly run',
   '{name} wieder im Nacht-Lauf': '{name} back in the nightly run',
-  '„{name}" aus dem Nacht-Mapping entfernen? (Der Graph selbst bleibt erhalten.)': 'Remove “{name}” from nightly mapping? (The graph itself is kept.)',
+  '„{name}" komplett entfernen? Löscht auch den Graphen im Hub, lokale Graph-Daten und gespeicherte Antworten — der Projektordner selbst bleibt unberührt.': 'Remove “{name}” completely? Also deletes the graph in the hub, local graph data and saved answers — the project folder itself is untouched.',
   'Übergeordneter Ordner': 'Parent folder',
   'Keine Unterordner.': 'No subfolders.',
   'Projekt hinzugefügt — läuft ab jetzt im Nacht-Mapping mit': 'Project added — it will be part of nightly mapping from now on',
@@ -1036,11 +1036,11 @@ async function loadProjectsCard() {
     };
     row.querySelector('[data-a=ignore]').onclick = () => openIgnore(p);
     row.querySelector('[data-a=del]').onclick = async () => {
-      if (!await askConfirm(t2('„{name}" aus dem Nacht-Mapping entfernen? (Der Graph selbst bleibt erhalten.)', {name: p.name}))) return;
+      if (!await askConfirm(t2('„{name}" komplett entfernen? Löscht auch den Graphen im Hub, lokale Graph-Daten und gespeicherte Antworten — der Projektordner selbst bleibt unberührt.', {name: p.name}))) return;
       const r = await api('/ui/api/mapping/projects', {method: 'PATCH', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({path: p.path, action: 'remove'})});
       if (!r.ok) { await zeigeFehler(r, t('Entfernen fehlgeschlagen')); return; }
-      toast(t2('Entfernt: {name}', {name: p.name}));
+      toast(t2('Komplett entfernt: {name}', {name: p.name}));
       loadProjectsCard(); loadMapping();
     };
     box.appendChild(row);

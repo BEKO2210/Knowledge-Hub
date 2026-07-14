@@ -33,8 +33,8 @@
 /* ---------- Light Mode: über Systemeinstellung ODER Umschalter ---------- */
 @media(prefers-color-scheme:light){:root:not([data-theme=dark]){
   --bg:#eef1f7; --surface:#ffffff; --surface2:#eaeef6; --line:#dde3ee; --line2:#c2cbdb;
-  --txt:#101828; --mut:#516078; --mut2:#7a889f;
-  --acc:#16a34a; --acc-dim:#15803d; --acc-ink:#052e16;
+  --txt:#101828; --mut:#516078; --mut2:#64708a;
+  --acc:#15803d; --acc-dim:#15803d; --acc-ink:#052e16;
   --blue:#2563eb; --red:#dc2626; --amber:#b45309;
   --shadow:0 4px 20px rgba(15,23,42,.1); --shadow-lg:0 18px 44px -12px rgba(15,23,42,.22);
   --card-2:#f7f9fd; --login-glow:#d5e2f7; --canvas-glow:#dde6f4; --scrim:rgba(255,255,255,.6);
@@ -44,8 +44,8 @@
 }}
 :root[data-theme=light]{
   --bg:#eef1f7; --surface:#ffffff; --surface2:#eaeef6; --line:#dde3ee; --line2:#c2cbdb;
-  --txt:#101828; --mut:#516078; --mut2:#7a889f;
-  --acc:#16a34a; --acc-dim:#15803d; --acc-ink:#052e16;
+  --txt:#101828; --mut:#516078; --mut2:#64708a;
+  --acc:#15803d; --acc-dim:#15803d; --acc-ink:#052e16;
   --blue:#2563eb; --red:#dc2626; --amber:#b45309;
   --shadow:0 4px 20px rgba(15,23,42,.1); --shadow-lg:0 18px 44px -12px rgba(15,23,42,.22);
   --card-2:#f7f9fd; --login-glow:#d5e2f7; --canvas-glow:#dde6f4; --scrim:rgba(255,255,255,.6);

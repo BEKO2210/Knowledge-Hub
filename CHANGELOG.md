@@ -6,6 +6,30 @@ Alle nennenswerten Änderungen an diesem Projekt. Format angelehnt an
 
 ## [Unveröffentlicht]
 
+### Hinzugefügt
+- **Eigene Hybrid-Retrieval-Engine (`semantic.py`).** `graph_query` (MCP) und der Fragen-Tab
+  steigen jetzt semantisch in den Graphen ein (lokales mehrsprachiges Embedding-Modell,
+  fastembed/ONNX, CPU, offline) und mischen die relevantesten Roh-Datei-Auszüge dazu.
+  Benchmark (26 Gold-Fragen, 7 Projekte): **96 % Hit-Rate @1200 Tokens / 69 % @400** statt
+  46 %/42 % mit dem bisherigen lexikalischen graphify-Lookup. Dreistufige Fallback-Kette
+  (Hybrid → Graph → graphify-CLI), selbstheilende Indizes, fehlender Chunk-Index blockiert
+  nie eine Anfrage. Neue Tests: `tests/test_semantic.py` (9 Tests, 83 % Modul-Coverage);
+  Stresstest: 80 parallele Hybrid-Queries ohne Fehler.
+
+### Behoben (UI)
+- **WCAG-Kontrast im Light-Theme:** Akzent-Grün `#16a34a` → `#15803d`, gedämpftes Grau
+  `#7a889f` → `#64708a` (beide vorher unter 4.5:1 auf Weiß). Lighthouse-Accessibility jetzt
+  100 (mobil + desktop); Meta-Description ergänzt.
+
+### Geändert
+- **Projekt entfernen löscht jetzt komplett.** Bisher entfernte der Papierkorb-Knopf in der
+  Projektliste nur den Eintrag aus dem Nacht-Mapping — der Graph blieb im Hub sichtbar und
+  abfragbar. Jetzt fallen mit: die Hub-Kopie im Wissens-Repo (inkl. Git-Commit + Push wie bei
+  graphify-sync), das lokale `graphify-out/` im Projektordner und die gespeicherten Antworten.
+  Der Projektordner selbst bleibt unberührt; `hub-backups`/`_claude` sind vor Namenskollisionen
+  geschützt. Bestätigungsdialog sagt jetzt ehrlich, was gelöscht wird; Audit-Log erhält einen
+  `GRAPH-PURGE`-Eintrag mit allen gelöschten Pfaden.
+
 ### Behoben
 - **„Erklären lassen" und der Fragen-Tab waren tot**, sobald das Modell auf die gpt-5-Familie
   stand. Die schickt `max_tokens` — die neuen Modelle verlangen `max_completion_tokens` und

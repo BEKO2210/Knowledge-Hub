@@ -7,3 +7,4 @@ cryptography==49.0.0
 PyYAML==6.0.3
 anthropic>=0.116.0
 segno>=1.6.0
+fastembed>=0.5
