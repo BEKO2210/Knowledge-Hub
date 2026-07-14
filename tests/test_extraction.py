@@ -173,3 +173,27 @@ def test_ignorierte_datei_hinterlaesst_keinen_geisterknoten(projekt):
     assert not any("app.py" in str(n.get("source_file")) for n in g["nodes"]), (
         "ignorierte Datei darf keinen Geisterknoten hinterlassen"
     )
+
+
+def test_laufzeitzustand_wird_nicht_als_architektur_gemappt(tmp_path):
+    """Der Hub-Graph enthielt 28% Laufzeitdaten: answers/-Antwortcache anderer Projekte,
+    oauth_state.json (Session-/Client-Zustand!), ratelimit.json (hub-audit Run 12).
+    Veränderlicher Zustand ist kein Architekturwissen — und gehört schon gar nicht
+    in das synchronisierte Wissens-Repo."""
+    projekt = tmp_path / "hub"
+    for rel in (
+        "answers/foldpage/query-abc.json",
+        "chunk-index/elementa.npz.json",
+        "oauth_state.json",
+        "ratelimit.json",
+        "mapping_dismissed.json",
+        "audit.log",
+        "errors.log",
+        "server.py",
+        "config.example.yaml",
+    ):
+        f = projekt / rel
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text("{}")
+    gefunden = {str(f.relative_to(projekt)) for f in extraction.iter_files(projekt)}
+    assert gefunden == {"server.py", "config.example.yaml"}, gefunden

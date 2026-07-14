@@ -55,6 +55,21 @@ SKIP_DIRS = {
 # Minifizierter/generierter Code trägt kein Architekturwissen — Elementa wurde damit
 # geflutet (GESAMTAUFTRAG 3.4, hub-audit Run 11).
 SKIP_NAME_PATTERNS = ("*.min.js", "*.min.css", "*.min.mjs", "*.map", "*.bundle.js", "*.chunk.js")
+# Veränderlicher Laufzeitzustand ist kein Architekturwissen: Der Hub-Graph enthielt
+# 28 % answers/-Antwortcache und sogar oauth_state.json als Knoten — und das Wissens-Repo
+# synchronisiert diese Inhalte weiter (hub-audit Run 12).
+SKIP_STATE_DIRS = {"answers", "chunk-index"}
+SKIP_STATE_FILES = {
+    "oauth_state.json",
+    "ratelimit.json",
+    "mapping_dismissed.json",
+    "audit.log",
+    "errors.log",
+    "errors.log.alt",
+    "vault.enc",
+    "vault.lock",
+}
+SKIP_DIRS |= SKIP_STATE_DIRS
 TEXT_SUFFIXES = {
     ".py",
     ".ts",
@@ -135,6 +150,8 @@ def iter_files(root: Path):
         if any(part in SKIP_DIRS for part in p.parts):
             continue
         if not p.is_file():
+            continue
+        if p.name in SKIP_STATE_FILES:
             continue
         if any(fnmatch(p.name, pat) for pat in SKIP_NAME_PATTERNS):
             continue
