@@ -27,6 +27,7 @@ from starlette.responses import JSONResponse
 import config
 import graph_context
 import health
+import locks
 import oauth
 import ratelimit
 import semantic
@@ -195,6 +196,26 @@ def _build_worker(name: str, path: Path) -> None:
     Jetzt endet JEDER Weg aus dieser Funktion in einem Endzustand (done/failed), und der
     Grund steht im Log, das der Nutzer über graph_build_status sieht.
     """
+    grund = ""
+    try:
+        # Prozessübergreifende Sperre (Run 9): Nachtlauf, andere Hub-Prozesse und dieser
+        # Worker dürfen NIE gleichzeitig dasselbe Projekt bauen (Kollision vom 14.07.).
+        # Die In-Memory-_builds-Prüfung fängt nur Doppelstarts im selben Prozess.
+        with locks.project_lock(name):
+            _build_worker_gesperrt(name, path)
+            return
+    except locks.LockedError as e:
+        grund = f"Sperre aktiv: {e}"
+    except Exception as e:  # noqa: BLE001 - ein toter Thread darf den Status nicht einfrieren
+        grund = f"Unerwarteter Fehler: {type(e).__name__}: {e}"
+    finally:
+        if grund:
+            with _builds_lock:
+                _builds[name].update(status="failed", finished=int(time.time()), error=grund)
+
+
+def _build_worker_gesperrt(name: str, path: Path) -> None:
+    """Der eigentliche Lauf — wird nur mit gehaltener Projekt-Sperre betreten."""
     ende, grund = "failed", ""
     try:
         BUILD_LOG_DIR.mkdir(exist_ok=True)

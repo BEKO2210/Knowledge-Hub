@@ -498,7 +498,18 @@ async def mapping_project_update(request: Request) -> JSONResponse:
         if str(Path(e["path"]).expanduser()) == resolved:
             found = True
             if action == "remove":
-                purged = _purge_graph_data(Path(e["path"]).expanduser())
+                # Purge nimmt die Projekt-Sperre (Run 9): Löschen während ein Build läuft
+                # würde halbe Artefakte hinterlassen bzw. der Build schriebe ins Nichts.
+                import locks
+
+                try:
+                    with locks.project_lock(Path(e["path"]).name, timeout=5):
+                        purged = _purge_graph_data(Path(e["path"]).expanduser())
+                except locks.LockedError:
+                    return JSONResponse(
+                        {"error": T("Projekt wird gerade gebaut — bitte warten und erneut entfernen")},
+                        status_code=409,
+                    )
                 continue
             if action == "toggle":
                 e["enabled"] = not e["enabled"]

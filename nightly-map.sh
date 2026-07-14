@@ -70,8 +70,19 @@ preflight() {
   return 0
 }
 
+LOCKDIR="${KMCP_LOCK_DIR:-$HOME/hub-data/locks}"
+mkdir -p "$LOCKDIR"
+
 for p in "${PROJECTS[@]}"; do
   echo "--- $p ($(date -Is))"
+  # Projekt-Sperre (Run 9): gleicher Lock wie der graph_build-Worker (locks.py).
+  # exec 8> schließt einen evtl. offenen fd der vorherigen Iteration automatisch.
+  NAME_LC="$(basename "$p" | tr '[:upper:]' '[:lower:]')"
+  exec 8>"$LOCKDIR/build-$NAME_LC.lock"
+  if ! flock -w 60 8; then
+    echo "ÜBERSPRUNGEN: $p ist seit 60s gesperrt (anderer Build läuft) — nächster Nachtlauf holt es nach"
+    continue
+  fi
   if ! msg="$(preflight "$p")"; then
     echo "$msg"
     echo "extract ÜBERSPRUNGEN: $p — im Diagnose-Tab reparierbar"
@@ -119,6 +130,7 @@ for p in "${PROJECTS[@]}"; do
   fi
 
   "$GRAPHIFY_SYNC" "$p" || echo "sync fehlgeschlagen: $p"
+  exec 8>&-   # Projekt-Sperre freigeben (continue-Pfade heilen sich beim nächsten exec 8> selbst)
 done
 
 # Semantische Indizes für den neuen Stand neu bauen (lokal, kostenlos).

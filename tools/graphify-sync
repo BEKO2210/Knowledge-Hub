@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Sync eines Projekt-graphify-out/ in das private Wissens-Repo (+ Push, best effort).
+#
+# Run 9 (hub-audit): globale Sync-Sperre — genau EIN Sync arbeitet gleichzeitig im
+# Wissens-Repo (rsync + git). Am 14.07. kollidierten parallele Syncs und die echten
+# Push-Fehler waren unterdrückt; der Fehlertext behauptete fälschlich, das Repo
+# existiere nicht. Jetzt: flock + der ECHTE git-Fehler in der Ausgabe.
+# (Die Aufholstrategie für den Push-Rückstau/non-fast-forward ist Run 13.)
+set -euo pipefail
+PROJECT="${1:?usage: graphify-sync <project-path>}"
+PROJECT="$(cd "$PROJECT" && pwd)"
+NAME="$(basename "$PROJECT" | tr '[:upper:]' '[:lower:]')"
+REPO="$HOME/graphify-knowledge"
+SRC="$PROJECT/graphify-out"
+[ -d "$SRC" ] || { echo "no graphify-out in $PROJECT — run /graphify first"; exit 1; }
+
+LOCKDIR="${KMCP_LOCK_DIR:-$HOME/hub-data/locks}"
+mkdir -p "$LOCKDIR"
+SYNC_LOCK_WAIT="${SYNC_LOCK_WAIT:-120}"
+exec 9>"$LOCKDIR/sync-repo.lock"
+if ! flock -w "$SYNC_LOCK_WAIT" 9; then
+  echo "sync ABGEBROCHEN: Wissens-Repo seit ${SYNC_LOCK_WAIT}s gesperrt (anderer Sync läuft): $NAME"
+  exit 75
+fi
+
+mkdir -p "$REPO/$NAME"
+rsync -a --delete "$SRC/" "$REPO/$NAME/graphify-out/"
+cd "$REPO"
+git add -A
+if git diff --cached --quiet; then echo "no changes for $NAME"; exit 0; fi
+git commit -q -m "graphify sync: $NAME ($(date -u +%Y-%m-%dT%H:%MZ))"
+if FEHLER=$(git push -q origin main 2>&1); then
+  echo "synced + pushed: $NAME"
+else
+  echo "synced locally: $NAME — push fehlgeschlagen: $(echo "$FEHLER" | grep -m1 -oE '(\[rejected\].*|fatal:.*|error:.*)' || echo "$FEHLER" | head -1)"
+fi
