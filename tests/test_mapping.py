@@ -166,3 +166,69 @@ def test_lauf_laesst_sich_abhaken_und_wieder_oeffnen(client, auth, fresh_vault, 
 def test_abhaken_ohne_lauf_ist_ein_400(client, auth, fresh_vault):
     r = client.post("/ui/api/mapping/history/dismiss", headers=auth, json={})
     assert r.status_code == 400
+
+
+# --- graph_build-Worker: gleiche Pipeline wie der Nachtlauf (U-1-Regression) ----------
+#
+# Der manuelle Build lief bis 2026-07-14 über `graphify update` (AST, ohne rationale-
+# Fakten), der Nachtlauf über die eigene Extraktion. Beide überschrieben sich
+# gegenseitig dieselbe graph.json (Flip-Flop, EVIDENCE/run-006). Der Worker muss
+# deshalb exakt die Nachtlauf-Pipeline fahren.
+
+
+def test_build_worker_nutzt_nachtlauf_pipeline(monkeypatch, tmp_path):
+    import server
+
+    projekt = tmp_path / "miniprojekt"
+    projekt.mkdir()
+    befehle: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):
+        befehle.append([str(c) for c in cmd])
+
+        class P:
+            returncode = 0
+
+        return P()
+
+    monkeypatch.setattr(server.subprocess, "run", fake_run)
+    monkeypatch.setattr(server, "BUILD_LOG_DIR", tmp_path / "logs")
+    server._builds[projekt.name.lower()] = {"status": "running", "started": 0, "finished": None}
+    server._build_worker(projekt.name.lower(), projekt)
+
+    assert server._builds[projekt.name.lower()]["status"] == "done"
+    flach = [" ".join(c) for c in befehle]
+    # 1. eigene Extraktion statt graphify update
+    assert any("extraction.py" in f for f in flach), flach
+    assert not any(" update " in f"{f} " for f in flach), f"graphify update darf nicht mehr laufen: {flach}"
+    # 2. Clustering/Report aus unserer graph.json
+    assert any("cluster-only" in f for f in flach), flach
+    # 3. Sync bleibt der letzte Schritt
+    assert "graphify-sync" in flach[-1] or "sync" in flach[-1], flach
+
+
+def test_build_worker_faellt_bei_extraktionsfehler_auf_graphify_zurueck(monkeypatch, tmp_path):
+    import server
+
+    projekt = tmp_path / "kaputt"
+    projekt.mkdir()
+    befehle: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):
+        befehle.append([str(c) for c in cmd])
+
+        class P:
+            # eigene Extraktion scheitert, alles andere klappt
+            returncode = 1 if any("extraction.py" in str(c) for c in cmd) else 0
+
+        return P()
+
+    monkeypatch.setattr(server.subprocess, "run", fake_run)
+    monkeypatch.setattr(server, "BUILD_LOG_DIR", tmp_path / "logs")
+    server._builds[projekt.name.lower()] = {"status": "running", "started": 0, "finished": None}
+    server._build_worker(projekt.name.lower(), projekt)
+
+    assert server._builds[projekt.name.lower()]["status"] == "done"
+    flach = [" ".join(c) for c in befehle]
+    assert any("extraction.py" in f for f in flach)
+    assert any(" update " in f"{f} " for f in flach), f"Fallback auf graphify update fehlt: {flach}"

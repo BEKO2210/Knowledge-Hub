@@ -199,30 +199,87 @@ def _build_worker(name: str, path: Path) -> None:
     try:
         BUILD_LOG_DIR.mkdir(exist_ok=True)
         log_file = BUILD_LOG_DIR / f"{name}.log"
-        steps = [[GRAPHIFY_BIN, "update", str(path)], [GRAPHIFY_SYNC, str(path)]]
+
+        # Dieselbe Pipeline wie der Nachtlauf — zwei verschiedene Extraktoren auf
+        # derselben graph.json erzeugten Flip-Flop-Graphen (U-1, 2026-07-14): der
+        # manuelle `graphify update` überschrieb die fakten-reiche eigene Extraktion,
+        # der nächste Nachtlauf stellte sie aus dem Hash-Cache wieder her — und die
+        # Oberfläche zeigte je nach Tageszeit ein anderes Mapping.
+        env = os.environ.copy()
+        label_args: list[str] = []
+        try:
+            m = CFG["mapping"]
+            binfo = m.get("backends", {}).get(m.get("backend", ""), {})
+            secret_name, envvar = binfo.get("secret"), binfo.get("env")
+            key = vault.secret_get(secret_name, client="graph_build") if secret_name else None
+            if key and envvar:
+                env[envvar] = key
+                label_args = [
+                    GRAPHIFY_BIN,
+                    "label",
+                    str(path),
+                    "--missing-only",
+                    "--backend",
+                    m.get("backend", ""),
+                    "--model",
+                    m.get("model", ""),
+                ]
+        except Exception:  # noqa: BLE001 - ohne Key wird nur nicht gelabelt/extrahiert
+            pass
+
+        # Der letzte Fehlgrund eines Schritts — er muss beim Nutzer ankommen
+        # (graph_build_status.error), nicht nur im Log stehen.
+        letzter_fehler = ""
+
+        def run_step(cmd: list[str], log) -> bool:
+            nonlocal letzter_fehler
+            log.write(f"$ {shlex.join(cmd)}\n")
+            log.flush()
+            try:
+                proc = subprocess.run(  # noqa: S603 - fixed binaries, validated path
+                    cmd, stdout=log, stderr=subprocess.STDOUT, text=True, timeout=1800, env=env
+                )
+            except subprocess.TimeoutExpired:
+                letzter_fehler = f"Zeitüberschreitung nach 30 Minuten: {shlex.join(cmd)}"
+                log.write(f"\n!! {letzter_fehler}\n")
+                return False
+            except OSError as e:  # Binary fehlt, keine Rechte, Platte voll
+                letzter_fehler = f"{cmd[0]} konnte nicht ausgeführt werden: {e}"
+                log.write(f"\n!! {letzter_fehler}\n")
+                return False
+            if proc.returncode != 0:
+                letzter_fehler = f"{shlex.join(cmd)} endete mit Code {proc.returncode}"
+                log.write(f"\n!! {letzter_fehler}\n")
+                return False
+            return True
+
         with log_file.open("w") as log:
-            for cmd in steps:
-                log.write(f"$ {shlex.join(cmd)}\n")
-                log.flush()
-                try:
-                    proc = subprocess.run(  # noqa: S603 - fixed binaries, validated path
-                        cmd,
-                        stdout=log,
-                        stderr=subprocess.STDOUT,
-                        text=True,
-                        timeout=1800,
-                    )
-                except subprocess.TimeoutExpired:
-                    grund = f"Zeitüberschreitung nach 30 Minuten: {shlex.join(cmd)}"
-                    log.write(f"\n!! {grund}\n")
+            eigene = run_step(
+                [
+                    str(Path(__file__).parent / ".venv" / "bin" / "python")
+                    if (Path(__file__).parent / ".venv").exists()
+                    else "python3",
+                    str(Path(__file__).parent / "extraction.py"),
+                    str(path),
+                ],
+                log,
+            )
+            if eigene:
+                if not run_step([GRAPHIFY_BIN, "cluster-only", str(path), "--no-label"], log):
+                    grund = letzter_fehler
                     return
-                except OSError as e:  # Binary fehlt, keine Rechte, Platte voll
-                    grund = f"{cmd[0]} konnte nicht ausgeführt werden: {e}"
-                    log.write(f"\n!! {grund}\n")
+                if label_args and not run_step(label_args, log):
+                    log.write("!! Benennung fehlgeschlagen — Bereiche bleiben unbenannt (nicht fatal)\n")
+            else:
+                # Fallback wie im Nachtlauf: klassisches graphify übernimmt komplett.
+                fehler_extraktion = letzter_fehler
+                log.write("!! eigene Extraktion fehlgeschlagen — Fallback auf graphify update\n")
+                if not run_step([GRAPHIFY_BIN, "update", str(path)], log):
+                    grund = f"{fehler_extraktion}; Fallback ebenso: {letzter_fehler}"
                     return
-                if proc.returncode != 0:
-                    grund = f"{shlex.join(cmd)} endete mit Code {proc.returncode}"
-                    return
+            if not run_step([GRAPHIFY_SYNC, str(path)], log):
+                grund = letzter_fehler
+                return
         ende = "done"
     except Exception as e:  # noqa: BLE001 - ein toter Thread darf den Status nicht einfrieren
         grund = f"Unerwarteter Fehler: {type(e).__name__}: {e}"
