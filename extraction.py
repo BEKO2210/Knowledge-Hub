@@ -153,7 +153,11 @@ def build_graph(cache: dict) -> dict:
                     "source_location": "L1",
                     "_origin": "hub-extract",
                 }
-        fid = slug(rel)
+        # Eigener ID-Namensraum für Datei-Knoten: graphifys Fuzzy-Dedup verschmolz
+        # slug(pfad) (z. B. engine_py) mit ähnlichen Entitäts-IDs und verweigerte dann
+        # das Schreiben der geclusterten graph.json — Graphen blieben ohne Communities
+        # neben Reports einer fremden Generation (hub-audit Run 10, asto-finance).
+        fid = "file__" + slug(rel)
         if fid not in nodes:
             nodes[fid] = {
                 "id": fid,

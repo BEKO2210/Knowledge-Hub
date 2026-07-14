@@ -102,3 +102,27 @@ def test_kaputter_cache_fuehrt_zu_vollaufbau(projekt):
     (projekt / "graphify-out" / extraction.CACHE_NAME).write_text("kein json")
     stats = extraction.extract_project(projekt, ask=fake)
     assert stats["changed"] == 2  # alles neu, aber ohne Absturz
+
+
+def test_dateiknoten_kollidieren_nicht_mit_gleichnamigen_entitaeten():
+    """graphifys Fuzzy-Dedup verschmolz Datei-Knoten (engine_py) mit ähnlichen Entitäten
+    und VERWEIGERTE dann das Schreiben der geclusterten graph.json — Ergebnis waren
+    Graphen ohne Communities neben Reports einer anderen Generation (asto-finance,
+    hub-audit Run 10). Datei-Knoten tragen deshalb einen eigenen ID-Namensraum."""
+    cache = {
+        "engine.py": {
+            "hash": "x",
+            "entities": [{"label": "engine", "rationale": "Rechenkern", "type": "module"}],
+            "relations": [{"source": "engine", "target": "engine.py"}],
+        }
+    }
+    g = extraction.build_graph(cache)
+    ids = {n["id"] for n in g["nodes"]}
+    datei = [n for n in g["nodes"] if n["file_type"] == "file"]
+    assert len(g["nodes"]) == 2, ids
+    assert len(datei) == 1
+    assert datei[0]["id"].startswith("file__"), datei[0]["id"]
+    assert datei[0]["label"] == "engine.py"  # Label bleibt der reine Pfad
+    # Kanten müssen den neuen Datei-Namensraum benutzen
+    kanten = {(e["source"], e["target"]) for e in g["links"]}
+    assert ("engine", datei[0]["id"]) in kanten, kanten
