@@ -43,10 +43,18 @@ SKIP_DIRS = {
     "coverage",
     ".turbo",
     "vendor",
+    "third_party",
+    "test-results",
+    "playwright-report",
+    ".pytest_cache",
+    ".ruff_cache",
     "backups",
     "logs",
     "data",
 }
+# Minifizierter/generierter Code trägt kein Architekturwissen — Elementa wurde damit
+# geflutet (GESAMTAUFTRAG 3.4, hub-audit Run 11).
+SKIP_NAME_PATTERNS = ("*.min.js", "*.min.css", "*.min.mjs", "*.map", "*.bundle.js", "*.chunk.js")
 TEXT_SUFFIXES = {
     ".py",
     ".ts",
@@ -89,13 +97,51 @@ Regeln:
 - Sprache der rationale: Deutsch."""
 
 
+def _ignore_patterns(root: Path) -> list[str]:
+    """Muster aus der .graphifyignore des Projekts — dieselbe Datei, die die UI pflegt
+    und die graphify liest. Vorher galt sie NUR für graphify: in der Oberfläche
+    ignorierte Dateien wurden von der eigenen Extraktion trotzdem gemappt (Run 11)."""
+    f = root / ".graphifyignore"
+    if not f.is_file():
+        return []
+    muster = []
+    try:
+        for zeile in f.read_text(encoding="utf-8", errors="ignore").splitlines():
+            zeile = zeile.strip()
+            if zeile and not zeile.startswith("#"):
+                muster.append(zeile)
+    except OSError:
+        return []
+    return muster
+
+
+def _ignoriert(rel: str, name: str, muster: list[str]) -> bool:
+    from fnmatch import fnmatch
+
+    for pat in muster:
+        if pat.endswith("/"):  # Verzeichnis-Muster: trifft jeden Pfadteil
+            if pat.rstrip("/") in rel.split("/"):
+                return True
+        elif fnmatch(name, pat) or fnmatch(rel, pat):
+            return True
+    return False
+
+
 def iter_files(root: Path):
+    from fnmatch import fnmatch
+
+    muster = _ignore_patterns(root)
     for p in sorted(root.rglob("*")):
         if any(part in SKIP_DIRS for part in p.parts):
             continue
-        if p.is_file() and (
-            p.suffix.lower() in TEXT_SUFFIXES or p.name in SPECIAL_NAMES or p.name.startswith(".env")
-        ):
+        if not p.is_file():
+            continue
+        if any(fnmatch(p.name, pat) for pat in SKIP_NAME_PATTERNS):
+            continue
+        rel = str(p.relative_to(root))
+        if muster and _ignoriert(rel, p.name, muster):
+            continue
+        if p.suffix.lower() in TEXT_SUFFIXES or p.name in SPECIAL_NAMES or p.name.startswith(".env"):
             try:
                 if 0 < p.stat().st_size <= MAX_FILE and os.access(p, os.R_OK):
                     yield p

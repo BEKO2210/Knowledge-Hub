@@ -126,3 +126,50 @@ def test_dateiknoten_kollidieren_nicht_mit_gleichnamigen_entitaeten():
     # Kanten müssen den neuen Datei-Namensraum benutzen
     kanten = {(e["source"], e["target"]) for e in g["links"]}
     assert ("engine", datei[0]["id"]) in kanten, kanten
+
+
+def test_vendor_und_testartefakte_werden_nicht_extrahiert(tmp_path, monkeypatch):
+    """Elementa wurde von test-results/-JSONs und Minified-Code gemappt (hub-audit Run 11).
+    Die eingebaute Skip-Liste muss die Auftrag-Kapitel-3.4-Muster abdecken."""
+    projekt = tmp_path / "p"
+    for rel in (
+        "test-results/e2e.json",
+        "playwright-report/index.html",
+        "third_party/lib.py",
+        "public/vendor/babel.min.js",
+        "app/bundle.map",
+        "echt/code.py",
+    ):
+        f = projekt / rel
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text("x = 1\n")
+    gefunden = {str(f.relative_to(projekt)) for f in extraction.iter_files(projekt)}
+    assert gefunden == {"echt/code.py"}, gefunden
+
+
+def test_graphifyignore_wirkt_auch_auf_die_eigene_extraktion(tmp_path):
+    """Die UI schreibt .graphifyignore — bisher las nur graphify sie, extraction.py nicht.
+    Ein in der UI ignoriertes Muster darf NICHT mehr extrahiert werden."""
+    projekt = tmp_path / "p"
+    (projekt / "geheim").mkdir(parents=True)
+    (projekt / "geheim" / "notizen.md").write_text("privat")
+    (projekt / "app.py").write_text("x = 1")
+    (projekt / "gen.g.ts").write_text("// generiert")
+    (projekt / ".graphifyignore").write_text("geheim/\n*.g.ts\n")
+    gefunden = {str(f.relative_to(projekt)) for f in extraction.iter_files(projekt)}
+    assert gefunden == {"app.py"}, gefunden
+
+
+def test_ignorierte_datei_hinterlaesst_keinen_geisterknoten(projekt):
+    """Eine Datei, die nachträglich ignoriert wird, verschwindet beim nächsten Lauf
+    aus Cache UND Graph (Invariante aus GESAMTAUFTRAG Kap. 7)."""
+    fake = ZaehlenderFake()
+    extraction.extract_project(projekt, ask=fake)
+    g = json.loads((projekt / "graphify-out" / "graph.json").read_text())
+    assert any("app.py" in str(n.get("source_file")) for n in g["nodes"])
+    (projekt / ".graphifyignore").write_text("app.py\n")
+    extraction.extract_project(projekt, ask=fake)
+    g = json.loads((projekt / "graphify-out" / "graph.json").read_text())
+    assert not any("app.py" in str(n.get("source_file")) for n in g["nodes"]), (
+        "ignorierte Datei darf keinen Geisterknoten hinterlassen"
+    )
