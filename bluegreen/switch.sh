@@ -27,7 +27,10 @@ esac
 
 STATE="$BG_STATE_DIR/slot-state.json"
 DROPIN_DIR="$HOME/.config/systemd/user/$BG_ENTRY_UNIT.service.d"
-PROBE_PATH="${BG_PROBE_PATH:-/ui}"   # Run 4 ersetzt das durch echtes Readiness
+# Standard-Probe ist das echte Readiness-Modell (health.py): Config, Datenpfade, Vault,
+# Projektliste, Graphen, MCP-Toolliste, Assets, Migrationsstand. /ui==200 reicht nicht.
+# Für Alt-Releases ohne /healthz kann die Instanz-Config BG_PROBE_PATH=/ui setzen.
+PROBE_PATH="${BG_PROBE_PATH:-/healthz/ready}"
 
 log() { printf '[switch] %s\n' "$1"; }
 

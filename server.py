@@ -26,6 +26,7 @@ from starlette.responses import JSONResponse
 
 import config
 import graph_context
+import health
 import oauth
 import ratelimit
 import semantic
@@ -471,6 +472,25 @@ class BearerGate:
         static_ok = bool(MCP_TOKEN) and hmac.compare_digest(token, MCP_TOKEN)
         ua = headers.get(b"user-agent", b"").decode(errors="replace")
         authorized = static_ok or oauth.validate_access_token(token, ua)
+        # Gesundheitsebenen für Blue-Green: live/ready sind offen, aber bewusst nur ein
+        # Statuswort (kein Befund nach außen — der Hostname hängt am Tunnel). Die
+        # Detailsicht verlangt denselben Bearer wie MCP; ohne ihn fällt der Aufruf in
+        # den allgemeinen 401-Zweig weiter unten.
+        if path == "/healthz/live":
+            await JSONResponse({"status": "ok"})(scope, receive, send)
+            return
+        if path == "/healthz/ready":
+            ok, _checks = await health.ready(mcp)
+            await JSONResponse({"status": "ready" if ok else "unready"}, status_code=200 if ok else 503)(
+                scope, receive, send
+            )
+            return
+        if path == "/healthz/deep" and authorized:
+            ok, checks = await health.ready(mcp)
+            await JSONResponse({"status": "ready" if ok else "unready", "checks": checks})(
+                scope, receive, send
+            )
+            return
         if path == "/ui" or path.startswith("/ui/"):
             # Die Seite selbst und der Login sind offen; alle Daten-Endpunkte nicht.
             # /ui/asset/ = Stylesheet und Skript der Oberfläche — reiner Programmcode,
