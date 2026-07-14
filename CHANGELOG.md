@@ -7,6 +7,15 @@ Alle nennenswerten Änderungen an diesem Projekt. Format angelehnt an
 ## [Unveröffentlicht]
 
 ### Hinzugefügt
+- **Eigene Extraktion ist jetzt der Standard (`extraction.py`).** Inkrementell über einen
+  Datei-Hash-Cache (unveränderte Dateien kosten keinen LLM-Aufruf), volle Coverage inkl.
+  Docker-Compose, Configs, Docs und .env-Vorlagen, faktenreiche rationale-Texte.
+  Clustering/Report/graph.html liefert weiterhin `graphify cluster-only` auf unserer
+  graph.json; schlägt die eigene Extraktion fehl, fällt der Nacht-Lauf auf
+  `graphify extract` zurück. Nebenbefund behoben: das 900-Token-Antwortlimit in `llm.py`
+  schnitt Extraktions-JSON ab (Tolga: 27 → 93 Knoten nach dem Fix) — das Limit ist jetzt
+  parametrierbar. Tests: `tests/test_extraction.py` (6 Tests, u. a. Inkrementalität und
+  „kaputte Antwort verliert kein altes Wissen").
 - **Eigene Hybrid-Retrieval-Engine (`semantic.py`).** `graph_query` (MCP) und der Fragen-Tab
   steigen jetzt semantisch in den Graphen ein (lokales mehrsprachiges Embedding-Modell,
   fastembed/ONNX, CPU, offline) und mischen die relevantesten Roh-Datei-Auszüge dazu.

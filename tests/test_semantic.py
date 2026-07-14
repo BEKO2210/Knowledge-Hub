@@ -86,12 +86,11 @@ def test_query_baut_index_neu_wenn_graph_neuer(fake_model, projekt):
     out, _ = projekt
     semantic.build_index(out)
     idx = out / "graphify-out" / semantic.INDEX_NAME
-    alt = idx.stat().st_mtime
-    # Graph "ändert sich" (mtime in die Zukunft)
-    graph = out / "graphify-out" / "graph.json"
     import os
 
-    os.utime(graph, (graph.stat().st_atime, graph.stat().st_mtime + 10))
+    # Index künstlich alt machen — der Graph ist damit neuer
+    os.utime(idx, (idx.stat().st_atime, idx.stat().st_mtime - 100))
+    alt = idx.stat().st_mtime
     semantic.query(out, "vault", budget=400)
     assert idx.stat().st_mtime > alt
 

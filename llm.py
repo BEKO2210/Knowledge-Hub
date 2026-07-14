@@ -30,7 +30,7 @@ class LLMError(RuntimeError):
 _NEUES_LIMIT = re.compile(r"^(gpt-5|o[1-9])", re.I)
 
 
-def _openai_body(model: str, system: str, user: str, limit_key: str) -> bytes:
+def _openai_body(model: str, system: str, user: str, limit_key: str, limit: int = 900) -> bytes:
     return json.dumps(
         {
             "model": model,
@@ -38,12 +38,12 @@ def _openai_body(model: str, system: str, user: str, limit_key: str) -> bytes:
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ],
-            limit_key: 900,
+            limit_key: limit,
         }
     ).encode()
 
 
-def _call_openai(base_url: str, key: str, model: str, system: str, user: str) -> str:
+def _call_openai(base_url: str, key: str, model: str, system: str, user: str, limit: int = 900) -> str:
     url = base_url.rstrip("/") + "/chat/completions"
     kopf = {"Content-Type": "application/json", "Authorization": f"Bearer {key}"}
     # Passenden Namen raten — und wenn der Anbieter widerspricht, den anderen nehmen.
@@ -52,7 +52,7 @@ def _call_openai(base_url: str, key: str, model: str, system: str, user: str) ->
     dann = "max_tokens" if erst == "max_completion_tokens" else "max_completion_tokens"
 
     for versuch, limit_key in enumerate((erst, dann)):
-        req = urllib.request.Request(url, data=_openai_body(model, system, user, limit_key), headers=kopf)
+        req = urllib.request.Request(url, data=_openai_body(model, system, user, limit_key, limit), headers=kopf)
         try:
             with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
                 data = json.load(r)
@@ -75,7 +75,7 @@ def _call_openai(base_url: str, key: str, model: str, system: str, user: str) ->
         raise LLMError("Unerwartete Antwort des Anbieters") from e
 
 
-def _call_anthropic(key: str, model: str, system: str, user: str) -> str:
+def _call_anthropic(key: str, model: str, system: str, user: str, limit: int = 900) -> str:
     try:
         import anthropic
     except ImportError as e:  # pragma: no cover
@@ -85,7 +85,7 @@ def _call_anthropic(key: str, model: str, system: str, user: str) -> str:
     try:
         msg = client.messages.create(
             model=model,
-            max_tokens=900,
+            max_tokens=limit,
             system=system,
             messages=[{"role": "user", "content": user}],
         )
@@ -98,15 +98,20 @@ def _call_anthropic(key: str, model: str, system: str, user: str) -> str:
     return "".join(b.text for b in msg.content if b.type == "text").strip()
 
 
-def ask(backend: dict, model: str, key: str, system: str, user: str) -> str:
-    """Eine Frage an das konfigurierte Backend stellen."""
+def ask(backend: dict, model: str, key: str, system: str, user: str, limit: int = 900) -> str:
+    """Eine Frage an das konfigurierte Backend stellen.
+
+    limit = maximale Antwort-Tokens. 900 reicht für Erklärungen und Chat-Antworten;
+    die Graph-Extraktion braucht mehr (JSON mit bis zu 12 Entities + Fakten) und
+    übergibt ein höheres Limit — sonst wird das JSON mittendrin abgeschnitten.
+    """
     api = backend.get("api", "openai")
     if api == "anthropic":
-        return _call_anthropic(key, model, system, user)
+        return _call_anthropic(key, model, system, user, limit)
     base = backend.get("base_url")
     if not base:
         raise LLMError("Für dieses Backend ist keine base_url konfiguriert.")
-    return _call_openai(base, key or "local", model, system, user)
+    return _call_openai(base, key or "local", model, system, user, limit)
 
 
 EXPLAIN_SYSTEM = (

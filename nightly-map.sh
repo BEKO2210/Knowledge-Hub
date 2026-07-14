@@ -78,9 +78,19 @@ for p in "${PROJECTS[@]}"; do
     continue
   fi
   [ -n "$msg" ] && echo "$msg"
-  "$GRAPHIFY" extract "$p" \
-    --backend "$BACKEND" --model "$MODEL" --api-timeout "$API_TIMEOUT" "${EXTRA_ARGS[@]}" \
-    || { echo "extract FEHLGESCHLAGEN: $p"; continue; }
+  # Eigene Extraktion (extraction.py) ist seit 2026-07-14 der Standard: inkrementell
+  # (Datei-Hash-Cache, unveränderte Dateien kosten keinen LLM-Aufruf) und mit voller
+  # Coverage (Compose, Configs, Docs — Benchmark: Lumo 3/3 statt 0/3). Clustering,
+  # Report und graph.html liefert danach graphify cluster-only aus unserer graph.json.
+  # Schlägt die eigene Extraktion fehl, übernimmt das klassische graphify extract.
+  if [ ${#EXTRA_ARGS[@]} -eq 0 ] && "$PY" "$HUB/extraction.py" "$p"; then
+    "$GRAPHIFY" cluster-only "$p" --no-label || echo "cluster-only fehlgeschlagen: $p"
+  else
+    echo "eigene Extraktion nicht möglich — Fallback auf graphify extract: $p"
+    "$GRAPHIFY" extract "$p" \
+      --backend "$BACKEND" --model "$MODEL" --api-timeout "$API_TIMEOUT" "${EXTRA_ARGS[@]}" \
+      || { echo "extract FEHLGESCHLAGEN: $p"; continue; }
+  fi
 
   # Bereiche benennen. OHNE diesen Schritt heißen alle neuen Bereiche in der Oberfläche
   # nur „Bereich 0, 1, 2…" — extract clustert zwar, vergibt aber keine Namen. Die
