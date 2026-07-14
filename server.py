@@ -299,7 +299,8 @@ def _build_worker_gesperrt(name: str, path: Path) -> None:
                 log,
             )
             if eigene:
-                if not run_step([GRAPHIFY_BIN, "cluster-only", str(path), "--no-label"], log):
+                cluster_cmd = str(Path(__file__).parent / "tools" / "graphify-cluster-force")
+                if not run_step([cluster_cmd, str(path), "--no-label"], log):
                     grund = scheitere(letzter_fehler)
                     return
                 if label_args and not run_step(label_args, log):

@@ -97,7 +97,7 @@ for p in "${PROJECTS[@]}"; do
   # Report und graph.html liefert danach graphify cluster-only aus unserer graph.json.
   # Schlägt die eigene Extraktion fehl, übernimmt das klassische graphify extract.
   if [ ${#EXTRA_ARGS[@]} -eq 0 ] && "$PY" "$HUB/extraction.py" "$p"; then
-    if ! "$GRAPHIFY" cluster-only "$p" --no-label; then
+    if ! "$HUB/tools/graphify-cluster-force" "$p" --no-label; then
       echo "cluster-only fehlgeschlagen: $p — stelle vorherige Generation wieder her"
       "$PY" "$HUB/buildmeta.py" restore "$p" || echo "PROBLEM: restore fehlgeschlagen: $p"
       continue

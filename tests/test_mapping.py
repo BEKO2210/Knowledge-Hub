@@ -27,12 +27,15 @@ LOG_ZWEITER_LAUF = """=== nightly-map start 2026-07-11T03:30:00+00:00 backend=op
 
 
 # --- die oneshot-Falle ---------------------------------------------------------
-@pytest.mark.parametrize("zustand,laeuft", [
-    ("active", True),
-    ("activating", True),   # <- die Falle: oneshot meldet das, WÄHREND es läuft
-    ("inactive", False),
-    ("failed", False),
-])
+@pytest.mark.parametrize(
+    "zustand,laeuft",
+    [
+        ("active", True),
+        ("activating", True),  # <- die Falle: oneshot meldet das, WÄHREND es läuft
+        ("inactive", False),
+        ("failed", False),
+    ],
+)
 def test_oneshot_activating_gilt_als_laufend(client, auth, fresh_vault, monkeypatch, zustand, laeuft):
     """Ein Type=oneshot-Dienst ist während des Laufs „activating", nicht „active".
 
@@ -71,10 +74,10 @@ def test_parser_liest_lauf_korrekt(monkeypatch, tmp_path):
     laeufe = mapping._parse_runs()
     assert len(laeufe) == 1
     lauf = laeufe[0]
-    assert lauf["duration_s"] == 360           # 03:30:00 -> 03:36:00
+    assert lauf["duration_s"] == 360  # 03:30:00 -> 03:36:00
     assert lauf["model"] == "gpt-4.1-mini"
-    assert round(lauf["cost"], 4) == 0.03      # 0.0210 + 0.0090
-    assert lauf["nodes_total"] == 200          # 120 + 80
+    assert round(lauf["cost"], 4) == 0.03  # 0.0210 + 0.0090
+    assert lauf["nodes_total"] == 200  # 120 + 80
     assert lauf["tokens_in"] == 12000 and lauf["tokens_out"] == 3400
     assert lauf["failed"] == 1
     assert lauf["failed_names"] == ["lumo"]
@@ -83,8 +86,7 @@ def test_parser_liest_lauf_korrekt(monkeypatch, tmp_path):
 
 def test_parser_erkennt_knoten_zuwachs_zum_vorlauf(monkeypatch, tmp_path):
     """Der Zuwachs gegenüber dem Vorlauf ist die eigentliche Aussage der Historie."""
-    monkeypatch.setattr(mapping, "NIGHTLY_LOG_DIR",
-                        _schreibe_logs(tmp_path, LOG, LOG_ZWEITER_LAUF))
+    monkeypatch.setattr(mapping, "NIGHTLY_LOG_DIR", _schreibe_logs(tmp_path, LOG, LOG_ZWEITER_LAUF))
     laeufe = mapping._parse_runs()
     assert len(laeufe) == 2
     neuester = max(laeufe, key=lambda r: r["start"])
@@ -96,8 +98,9 @@ def test_parser_erkennt_knoten_zuwachs_zum_vorlauf(monkeypatch, tmp_path):
 
 def test_parser_stolpert_nicht_ueber_muell(monkeypatch, tmp_path):
     """Ein abgeschnittenes oder leeres Log darf die Oberfläche nicht zerlegen."""
-    monkeypatch.setattr(mapping, "NIGHTLY_LOG_DIR",
-                        _schreibe_logs(tmp_path, "", "=== nightly-map start kaputt ==="))
+    monkeypatch.setattr(
+        mapping, "NIGHTLY_LOG_DIR", _schreibe_logs(tmp_path, "", "=== nightly-map start kaputt ===")
+    )
     assert mapping._parse_runs() == [] or isinstance(mapping._parse_runs(), list)
 
 
@@ -124,8 +127,7 @@ def test_sicherungsfehler_ist_kein_projektfehler(monkeypatch, tmp_path):
     Ein gescheitertes Projekt repariert man anders als eine gescheiterte Sicherung;
     die Oberfläche muss beides auseinanderhalten können.
     """
-    monkeypatch.setattr(mapping, "NIGHTLY_LOG_DIR",
-                        _schreibe_logs(tmp_path, LOG_MIT_SICHERUNGSFEHLER))
+    monkeypatch.setattr(mapping, "NIGHTLY_LOG_DIR", _schreibe_logs(tmp_path, LOG_MIT_SICHERUNGSFEHLER))
     lauf = mapping._parse_runs()[0]
     assert lauf["backup_failed"] is True
     assert lauf["failed"] == 0, "Die Sicherung ist KEIN Projektfehler"
@@ -151,15 +153,13 @@ def test_lauf_laesst_sich_abhaken_und_wieder_oeffnen(client, auth, fresh_vault, 
     assert lauf["dismissed"] is False
     start = lauf["start"]
 
-    r = client.post("/ui/api/mapping/history/dismiss", headers=auth,
-                    json={"start": start, "dismissed": True})
+    r = client.post("/ui/api/mapping/history/dismiss", headers=auth, json={"start": start, "dismissed": True})
     assert r.status_code == 200
     runs = client.get("/ui/api/mapping/history", headers=auth).json()["runs"]
     assert runs[0]["dismissed"] is True
     assert runs[0]["failed"] == 1, "Der Fehler bleibt sichtbar — er mahnt nur nicht mehr"
 
-    client.post("/ui/api/mapping/history/dismiss", headers=auth,
-                json={"start": start, "dismissed": False})
+    client.post("/ui/api/mapping/history/dismiss", headers=auth, json={"start": start, "dismissed": False})
     assert client.get("/ui/api/mapping/history", headers=auth).json()["runs"][0]["dismissed"] is False
 
 
@@ -203,8 +203,8 @@ def test_build_worker_nutzt_nachtlauf_pipeline(monkeypatch, tmp_path):
     # 1. eigene Extraktion statt graphify update
     assert any("extraction.py" in f for f in flach), flach
     assert not any(" update " in f"{f} " for f in flach), f"graphify update darf nicht mehr laufen: {flach}"
-    # 2. Clustering/Report aus unserer graph.json
-    assert any("cluster-only" in f for f in flach), flach
+    # 2. Clustering/Report aus unserer graph.json (force-Wrapper, s. tools/graphify-cluster-force)
+    assert any("graphify-cluster-force" in f for f in flach), flach
     # 3. Sync bleibt der letzte Schritt
     assert "graphify-sync" in flach[-1] or "sync" in flach[-1], flach
 

@@ -1,0 +1,30 @@
+#!/home/belkis/.local/graphify-venv/bin/python3
+"""graphify cluster-only mit force=True — über die offizielle Bibliotheks-API.
+
+graphifys Schwund-Schutz verweigert das Schreiben der geclusterten graph.json,
+wenn die Fuzzy-Deduplikation Knoten verschmilzt (neu < alt). Die eigene
+Fehlermeldung empfiehlt »pass force=True« — der CLI-Pfad von cluster-only
+verdrahtet den Schalter aber nicht (cli.py ruft to_json ohne force auf).
+
+In UNSERER Pipeline ist der Schwund verifiziert legitim: extraction.py ist die
+Quelle der Wahrheit, der Dedup läuft auf einer frischen, vollständigen Generation,
+und Snapshot + Abnahme-Gate (buildmeta, hub-audit Runs 7/8) schützen vor echtem
+Datenverlust. Ohne force entstehen Misch-Generationen: graph.json ohne Communities
+neben Report/Viewer einer anderen Zählung (asto-finance, hub-audit Run 10).
+
+Wir ersetzen deshalb graphify.export.to_json prozesslokal durch eine
+force-Variante und rufen dann die unveränderte offizielle CLI auf.
+"""
+
+from __future__ import annotations
+
+import functools
+import runpy
+import sys
+
+import graphify.export as export
+
+export.to_json = functools.partial(export.to_json, force=True)
+
+sys.argv = ["graphify", "cluster-only", *sys.argv[1:]]
+runpy.run_module("graphify", run_name="__main__")
