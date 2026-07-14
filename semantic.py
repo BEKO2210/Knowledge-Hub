@@ -13,6 +13,7 @@ Das Modell wird einmal pro Prozess geladen (~2 s) und bleibt danach warm (~50 ms
 from __future__ import annotations
 
 import json
+import os
 import threading
 from pathlib import Path
 
@@ -23,7 +24,9 @@ INDEX_NAME = "semantic-index.npz"
 
 # Chunk-Indizes (Roh-Datei-Auszüge) liegen hub-lokal, nicht im Wissens-Repo —
 # sie enthalten Quelltext-Kopien und wären im Git-Sync nur Ballast.
-CHUNK_DIR = Path(__file__).parent / "chunk-index"
+# Env-überschreibbar: Bei unveränderlichen Blue-Green-Releases läge der Index sonst
+# im Release-Verzeichnis und würde bei jedem Release neu gebaut (hub-audit, Umzug).
+CHUNK_DIR = Path(os.environ.get("KMCP_CACHE_DIR", str(Path(__file__).parent))) / "chunk-index"
 SKIP_DIRS = {
     ".git",
     "node_modules",
