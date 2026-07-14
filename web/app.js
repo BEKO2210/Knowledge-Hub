@@ -13,6 +13,9 @@ const EN = {
   'Zwei-Faktor lässt sich gerade nicht einrichten.': 'Two-factor cannot be set up right now.',
   'gespeichert · {wann}': 'saved · {wann}',
   'Neu erklären': 'Explain again',
+  'KI antwortet…': 'AI is answering…',
+  'Durchsucht den Graphen und formuliert die Antwort — bis zu zwei Minuten.': 'Searching the graph and writing the answer — up to two minutes.',
+  'KI-Antwort': 'AI answer',
   'Bitte Name und Wert ausfüllen.': 'Please fill in both name and value.',
   'Adresse kopiert': 'Address copied',
   'Token kopiert': 'Token copied',
@@ -124,6 +127,7 @@ const EN = {
   'Projekt hinzugefügt — läuft ab jetzt im Nacht-Mapping mit': 'Project added — it will be part of nightly mapping from now on',
   'z. B.\nnode_modules/\ndata/\n.env\n*.key': 'e.g.\nnode_modules/\ndata/\n.env\n*.key',
   'Ausschluss-Regeln gespeichert': 'Exclusion rules saved',
+  'Empfohlene Ausschlüsse vorbefüllt — Speichern übernimmt sie': 'Recommended exclusions prefilled — save to apply them',
 
   /* Graph */
   'Alle': 'All',
@@ -673,13 +677,20 @@ async function sendAsk(e) {
   $('askinput').value = '';
   $('asksend').disabled = true;
 
+  /* Der Nutzer soll SEHEN, dass jetzt die KI arbeitet — nicht raten, ob etwas hängt. */
   const loading = askBubble('ai',
-    `<div class="brandloader" style="transform:scale(.7);transform-origin:left"><svg viewBox="0 0 24 24" style="width:34px;height:34px">
-       <path class="draw" pathLength="360" stroke="url(#g-a)" d="m8.59 13.51 6.83 3.98M15.41 6.51l-6.82 3.98"/>
-       <circle class="orbit" pathLength="360" stroke="url(#g-b)" cx="12" cy="12" r="10.5"/>
-       <circle class="draw" pathLength="360" stroke="url(#g-a)" cx="18" cy="5" r="2.6"/>
-       <circle class="draw" pathLength="360" stroke="url(#g-a)" cx="6" cy="12" r="2.6"/>
-       <circle class="draw" pathLength="360" stroke="url(#g-a)" cx="18" cy="19" r="2.6"/></svg></div>`);
+    `<div style="display:flex;align-items:center;gap:10px">
+       <div class="brandloader" style="transform:scale(.7);transform-origin:left"><svg viewBox="0 0 24 24" style="width:34px;height:34px">
+         <path class="draw" pathLength="360" stroke="url(#g-a)" d="m8.59 13.51 6.83 3.98M15.41 6.51l-6.82 3.98"/>
+         <circle class="orbit" pathLength="360" stroke="url(#g-b)" cx="12" cy="12" r="10.5"/>
+         <circle class="draw" pathLength="360" stroke="url(#g-a)" cx="18" cy="5" r="2.6"/>
+         <circle class="draw" pathLength="360" stroke="url(#g-a)" cx="6" cy="12" r="2.6"/>
+         <circle class="draw" pathLength="360" stroke="url(#g-a)" cx="18" cy="19" r="2.6"/></svg></div>
+       <div style="min-width:0">
+         <div style="font-size:.86rem">${escapeHtml(t('KI antwortet…'))}</div>
+         <div style="color:var(--mut2);font-size:.74rem">${escapeHtml(t('Durchsucht den Graphen und formuliert die Antwort — bis zu zwei Minuten.'))}</div>
+       </div>
+     </div>`);
   thread.appendChild(loading);
   $('askscroll').scrollTop = $('askscroll').scrollHeight;
 
@@ -712,13 +723,18 @@ async function sendAsk(e) {
         box.firstChild.appendChild(src);
       }
       if (j.source === 'llm' || j.source === 'gespeichert') {
+        /* Klar kennzeichnen, dass hier die KI geantwortet hat — mit Anbieter und Modell,
+           im selben Chip-Stil wie im Erklär-Panel. */
         const foot = document.createElement('div');
-        foot.style.cssText = 'margin-top:10px;color:var(--mut2);font-size:.72rem';
-        foot.textContent = `${j.backend || ''} · ${j.model || ''}`;
+        foot.style.cssText = 'margin-top:10px;display:flex;align-items:center;gap:6px;flex-wrap:wrap';
+        foot.innerHTML = `<span class="chip"><svg class="ic" style="width:12px;height:12px;color:var(--acc)" viewBox="0 0 24 24"><use href="#i-spark"/></svg>${escapeHtml(t('KI-Antwort'))} · ${escapeHtml(j.backend || '')} · ${escapeHtml(j.model || '')}</span>`;
         if (j.source === 'gespeichert') {
           /* Der Nutzer soll wissen, dass er hier eine bereits bezahlte Antwort liest —
              und nicht rätseln, warum sie so schnell kam. */
-          foot.textContent += ' · ' + t2('gespeichert · {wann}', {wann: relTime(j.gespeichert)});
+          const chip = document.createElement('span');
+          chip.className = 'chip';
+          chip.textContent = t2('gespeichert · {wann}', {wann: relTime(j.gespeichert)});
+          foot.appendChild(chip);
         }
         box.firstChild.appendChild(foot);
       }
@@ -1095,8 +1111,9 @@ let ignoreFor = null;
 async function openIgnore(p) {
   ignoreFor = p.path;
   const d = await holeJson('/ui/api/mapping/ignore?path=' + encodeURIComponent(p.path));
-  $('ignoretext').value = d.content || '';
-  if (!d.content) $('ignoretext').placeholder = t('z. B.\nnode_modules/\ndata/\n.env\n*.key');
+  // Ohne eigene Regeln: empfohlene Standard-Ausschlüsse vorbefüllen — Speichern genügt.
+  $('ignoretext').value = d.content || d.default || '';
+  if (!d.content && d.default) toast(t('Empfohlene Ausschlüsse vorbefüllt — Speichern übernimmt sie'));
   $('ignoredlg').showModal();
 }
 async function saveIgnore() {
@@ -1414,6 +1431,26 @@ function selectNode(d) {
     `<span class="chip"><span style="width:9px;height:9px;border-radius:50%;background:${nodeColor(d)}"></span>${escapeHtml(comLabel(com))}</span>` +
     `<span class="chip">${t2('{n} Verbindungen', {n: d.degree})}</span>`;
   $('nfile').textContent = d.file || '';
+  // Show the node's own content on click. Long text wraps and scrolls (see the
+  // #ncontent rule in app.css); with a source URL we append it as a link.
+  const cbox = $('ncontent');
+  if (cbox) {
+    const txt = (d.rationale || '').trim();
+    if (txt) {
+      cbox.textContent = txt;
+      if (d.source_url) {
+        const a = document.createElement('a');
+        a.href = d.source_url; a.target = '_blank'; a.rel = 'noopener noreferrer';
+        a.className = 'nsrc'; a.textContent = d.source_url;
+        cbox.appendChild(document.createElement('br'));
+        cbox.appendChild(a);
+      }
+      cbox.style.display = 'block';
+    } else {
+      cbox.textContent = '';
+      cbox.style.display = 'none';
+    }
+  }
   $('explainout').style.display = 'none';
   $('explainwait').style.display = 'none';
   renderNeighbors(d);
@@ -1539,7 +1576,7 @@ async function doExplain(frisch) {
         const foot = document.createElement('div');
         foot.style.cssText = 'margin-top:12px;display:flex;align-items:center;gap:8px;flex-wrap:wrap';
         const gespeichert = j.source === 'gespeichert';
-        foot.innerHTML = `<span class="chip"><svg class="ic" style="width:13px;height:13px;color:var(--acc)" viewBox="0 0 24 24"><use href="#i-spark"/></svg>${escapeHtml(j.backend || '')} · ${escapeHtml(j.model || '')}</span>`;
+        foot.innerHTML = `<span class="chip"><svg class="ic" style="width:13px;height:13px;color:var(--acc)" viewBox="0 0 24 24"><use href="#i-spark"/></svg>${escapeHtml(t('KI-Antwort'))} · ${escapeHtml(j.backend || '')} · ${escapeHtml(j.model || '')}</span>`;
         if (gespeichert) {
           /* Ehrlich sagen, woher die Antwort kommt — und einen Weg anbieten, sie zu erneuern. */
           const chip = document.createElement('span');

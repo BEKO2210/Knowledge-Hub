@@ -25,6 +25,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 import config
+import graph_context
 import oauth
 import ratelimit
 import ui
@@ -115,13 +116,15 @@ def _run_graphify(project: str, args: list[str]) -> str:
 @mcp.tool
 def graph_query(project: str, question: str, budget_tokens: int = 1200) -> str:
     """Answer a question about a project's codebase from its knowledge graph (BFS traversal)."""
-    return _run_graphify(project, ["query", question, "--budget", str(budget_tokens)])
+    raw = _run_graphify(project, ["query", question, "--budget", str(budget_tokens)])
+    return graph_context.anreichern(KNOWLEDGE_ROOT / project, raw)
 
 
 @mcp.tool
 def graph_explain(project: str, node: str) -> str:
     """Plain-language explanation of a graph node (function, concept, module)."""
-    return _run_graphify(project, ["explain", node])
+    raw = _run_graphify(project, ["explain", node])
+    return graph_context.anreichern(KNOWLEDGE_ROOT / project, raw)
 
 
 @mcp.tool

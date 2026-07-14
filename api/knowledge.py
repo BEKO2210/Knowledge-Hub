@@ -14,6 +14,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 import config
+import graph_context
 import vault
 from api.common import DATA_DIR, GRAPHIFY_BIN, KNOWLEDGE_ROOT, _projects
 from api.i18n import T
@@ -61,6 +62,11 @@ async def graph(request: Request) -> JSONResponse:
             # nur „Bereich 7" — die Benennung wäre unsichtbar und damit sinnlos.
             "community_name": n.get("community_name"),
             "file": n.get("source_file"),
+            # The node's own content, so the UI can show it when a node is
+            # clicked. graphify keeps this as `rationale`; without it the panel
+            # could only show metadata, never what the node actually says.
+            "rationale": (n.get("rationale") or "")[:4000],
+            "source_url": n.get("source_url") if n.get("source_url") not in (None, "None") else "",
             "degree": degree.get(n["id"], 0),
         }
         for n in keep_nodes
@@ -196,7 +202,7 @@ async def explain(request: Request) -> JSONResponse:
     )
     if proc.returncode != 0:
         return JSONResponse({"error": proc.stderr.strip()[:2000] or "graphify failed"}, status_code=500)
-    context = proc.stdout.strip()
+    context = graph_context.anreichern(KNOWLEDGE_ROOT / name, proc.stdout.strip())
 
     # 2. Von der KI in verständliche Sprache bringen
     cfg = config.load()
@@ -284,13 +290,14 @@ async def graph_ask(request: Request) -> JSONResponse:
         return JSONResponse({"error": T("Bitte eine Frage eingeben.")}, status_code=400)
 
     def graphify_query(q: str) -> str:
-        return subprocess.run(  # noqa: S603 - fester Binary, geprüftes Projekt
+        raw = subprocess.run(  # noqa: S603 - fester Binary, geprüftes Projekt
             [GRAPHIFY_BIN, "query", q, "--budget", "1500"],
             cwd=KNOWLEDGE_ROOT / name,
             capture_output=True,
             text=True,
             timeout=60,
         ).stdout.strip()
+        return graph_context.anreichern(KNOWLEDGE_ROOT / name, raw)
 
     cfg = config.load()
     backend_name, backend = config.active_backend(cfg)

@@ -52,8 +52,7 @@ def _call_openai(base_url: str, key: str, model: str, system: str, user: str) ->
     dann = "max_tokens" if erst == "max_completion_tokens" else "max_completion_tokens"
 
     for versuch, limit_key in enumerate((erst, dann)):
-        req = urllib.request.Request(url, data=_openai_body(model, system, user, limit_key),
-                                     headers=kopf)
+        req = urllib.request.Request(url, data=_openai_body(model, system, user, limit_key), headers=kopf)
         try:
             with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
                 data = json.load(r)
@@ -61,8 +60,9 @@ def _call_openai(base_url: str, key: str, model: str, system: str, user: str) ->
         except urllib.error.HTTPError as e:
             detail = e.read().decode(errors="replace")[:300]
             # Genau dieser Fehler ist heilbar: der Anbieter will den anderen Namen.
-            heilbar = (e.code == 400 and versuch == 0
-                       and "max_tokens" in detail and "unsupported" in detail.lower())
+            heilbar = (
+                e.code == 400 and versuch == 0 and "max_tokens" in detail and "unsupported" in detail.lower()
+            )
             if heilbar:
                 continue
             raise LLMError(f"Anbieter antwortete {e.code}: {detail}") from e
@@ -123,7 +123,7 @@ def explain_prompt(project: str, node: str, graph_context: str) -> str:
         f"Projekt: {project}\n"
         f"Knoten: {node}\n\n"
         f"Das sagt der Wissensgraph über diesen Knoten und seine Nachbarschaft:\n"
-        f"```\n{graph_context[:6000]}\n```\n\n"
+        f"```\n{graph_context[:12000]}\n```\n\n"
         f"Erkläre den Knoten „{node}“."
     )
 
@@ -131,7 +131,8 @@ def explain_prompt(project: str, node: str, graph_context: str) -> str:
 QUERY_SYSTEM = (
     "Du hilfst beim Verstehen eines Software-Projekts, indem du Fragen anhand seines "
     "Wissensgraphen beantwortest. Du bekommst die Frage und die relevanten Knoten aus dem Graphen "
-    "(mit Datei und Zeilennummer). "
+    "(mit Datei und Zeilennummer). Unter INHALT folgen die gespeicherten Inhalte der Knoten — dort "
+    "stehen die konkreten Fakten (Ports, Versionen, Pfade, Entscheidungen); nutze sie bevorzugt. "
     "Antworte auf Deutsch, konkret und arbeitstauglich, in genau drei kurzen Absätzen, "
     "getrennt durch eine Leerzeile:\n"
     "Absatz 1: Direkte Antwort in ein, zwei Sätzen.\n"
@@ -160,6 +161,6 @@ def query_prompt(project: str, question: str, graph_context: str) -> str:
         f"Projekt: {project}\n"
         f"Frage: {question}\n\n"
         f"Relevante Knoten aus dem Wissensgraphen (BFS-Traversal):\n"
-        f"```\n{graph_context[:7000]}\n```\n\n"
+        f"```\n{graph_context[:13000]}\n```\n\n"
         f"Beantworte die Frage anhand dieser Knoten."
     )
