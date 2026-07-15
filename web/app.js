@@ -1019,15 +1019,19 @@ async function loadGraphStock() {
       ? `<span class="chip" style="color:var(--amber)">${t('zu klären')}</span>`
       : `<span class="chip">${t('archiviert')}</span>`;
     const zahlen = g.nodes != null ? t2('{n} Knoten', {n: g.nodes}) : t('ohne Zahlen');
-    const herkunft = g._kind === 'archived' && g.origin ? `<div style="color:var(--mut2);font-size:.76rem;margin-top:3px">${escapeHtml(g.origin)}</div>` : '';
-    row.innerHTML = `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+    const herkunft = g._kind === 'archived' && g.origin ? `<div style="color:var(--mut2);font-size:.76rem;margin-top:6px;line-height:1.5">${escapeHtml(g.origin)}</div>` : '';
+    /* Aktionen als EIGENE Zeile: mit margin-left:auto in der Kopfzeile wurden die Knöpfe
+       auf schmalen Screens zusammengequetscht und der Text lief über den Rahmen hinaus. */
+    row.innerHTML = `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;min-width:0">
       <span style="font-weight:600">${escapeHtml(g.name)}</span>${badge}
-      <span style="color:var(--mut);font-size:.82rem">${zahlen}</span>
-      <span style="margin-left:auto;display:flex;gap:8px" class="acts"></span></div>${herkunft}`;
+      <span style="color:var(--mut);font-size:.82rem">${zahlen}</span></div>${herkunft}
+      <div class="acts" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"></div>`;
     const acts = row.querySelector('.acts');
     const mk = (label, fn, danger) => {
       const b = document.createElement('button');
       b.className = 'btn ghost sm';
+      b.style.whiteSpace = 'nowrap';
+      b.style.flex = 'none';
       if (danger) b.style.color = 'var(--red)';
       b.textContent = label; b.onclick = fn; acts.appendChild(b);
     };
