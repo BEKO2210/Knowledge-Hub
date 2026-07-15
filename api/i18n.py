@@ -198,4 +198,9 @@ DE_EN: dict[str, str] = {
     "Nur unregistrierte oder archivierte Graphen sind hier entfernbar": "Only unregistered or archived graphs can be removed here",
     "Graph wird gerade gebaut — bitte später erneut": "Graph is being built — please retry later",
     "Unbekannte Aktion (archive|remove)": "Unknown action (archive|remove)",
+    # Post-Run-40 Nachtrag: Blue-Green-bewusster Server-Check
+    "läuft (Blue-Green, aktiver Slot: {slot})": "running (blue-green, active slot: {slot})",
+    "Entry-Socket aktiv, aber kein Slot läuft": "Entry socket active, but no slot is running",
+    "beide Slots laufen gleichzeitig — nur der aktive sollte laufen": "both slots are running at once — only the active one should run",
+    "Inaktiven Slot stoppen (Single-Writer-Regel).": "Stop the inactive slot (single-writer rule).",
 }

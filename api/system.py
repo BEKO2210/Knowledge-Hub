@@ -378,15 +378,45 @@ async def health(request: Request) -> JSONResponse:
     checks: list[dict] = []
 
     # --- Dienste ---
-    _, srv = _sysctl("is-active", "knowledge-mcp")
-    checks.append(
-        _check(
-            T("Server"),
-            "ok" if srv == "active" else "warn",
-            T("läuft") if srv == "active" else T("systemd meldet: {status}", status=srv),
-            "" if srv == "active" else "systemctl --user restart knowledge-mcp",
+    # Seit dem Blue-Green-Umzug (Run 28) läuft der Hub über kmcp-entry.socket -> Slots;
+    # die alte Einzel-Unit knowledge-mcp ist BEWUSST inaktiv (Notfallpfad). Der Check
+    # prüfte weiter nur die alte Unit — eine falsche Dauerwarnung mit gefährlichem
+    # Fix-Hinweis (Restart der Alt-Unit kollidiert mit dem Entry-Port).
+    _, entry = _sysctl("is-active", "kmcp-entry.socket")
+    if entry == "active":
+        slots = [s for s in ("blue", "green") if _sysctl("is-active", f"kmcp-{s}")[1] == "active"]
+        if len(slots) == 1:
+            checks.append(
+                _check(T("Server"), "ok", T("läuft (Blue-Green, aktiver Slot: {slot})", slot=slots[0]))
+            )
+        elif not slots:
+            checks.append(
+                _check(
+                    T("Server"),
+                    "err",
+                    T("Entry-Socket aktiv, aber kein Slot läuft"),
+                    "systemctl --user start kmcp-blue   # oder kmcp-green — je nach slot-state.json",
+                )
+            )
+        else:
+            checks.append(
+                _check(
+                    T("Server"),
+                    "warn",
+                    T("beide Slots laufen gleichzeitig — nur der aktive sollte laufen"),
+                    T("Inaktiven Slot stoppen (Single-Writer-Regel)."),
+                )
+            )
+    else:
+        _, srv = _sysctl("is-active", "knowledge-mcp")
+        checks.append(
+            _check(
+                T("Server"),
+                "ok" if srv == "active" else "warn",
+                T("läuft") if srv == "active" else T("systemd meldet: {status}", status=srv),
+                "" if srv == "active" else "systemctl --user restart knowledge-mcp",
+            )
         )
-    )
     _, timer = _sysctl("is-enabled", "nightly-map.timer")
     _, nxt = _sysctl("show", "nightly-map.timer", "--property=NextElapseUSecRealtime", "--value")
     checks.append(
