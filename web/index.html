@@ -119,7 +119,10 @@
     </div>
     <div id="graphwrap">
       <div id="canvasbox">
-        <div id="cv"></div>
+        <!-- role=img + Beschreibung: der Force-Graph ist ein <canvas> ohne Textalternative;
+             Screenreader bekämen sonst nur eine unbenannte Fläche. Die barrierefreie
+             Alternative ist die Knotensuche oben (Liste statt Bild). -->
+        <div id="cv" role="img" aria-label="Interaktiver Wissensgraph. Für eine barrierefreie Liste der Knoten die Knotensuche oben nutzen." data-en-title="Interactive knowledge graph. Use the node search above for an accessible list of nodes."></div>
         <!-- Wer den Hub gerade installiert hat, sieht sonst eine leere Fläche und
              erfährt nirgends, dass er zuerst ein Projekt mappen muss. -->
         <div id="graphempty" class="empty" style="display:none;position:absolute;inset:0;
@@ -589,7 +592,7 @@
   <div class="row" style="justify-content:space-between;margin-top:var(--sp-6)">
     <button class="btn ghost" id="tourskip" data-act="tourend" style="font-size:var(--fs-sm)">Überspringen</button>
     <div style="display:flex;gap:8px">
-      <button class="btn ghost" id="tourprev" data-act="tourstep" data-arg="-1"><svg class="ic" viewBox="0 0 24 24"><use href="#i-back"/></svg></button>
+      <button class="btn ghost" id="tourprev" data-act="tourstep" data-arg="-1" aria-label="Vorheriger Schritt" data-en-title="Previous step"><svg class="ic" viewBox="0 0 24 24"><use href="#i-back"/></svg></button>
       <button class="btn" id="tournext" data-act="tourstep" data-arg="1">Weiter</button>
     </div>
   </div>
