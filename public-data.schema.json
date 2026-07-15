@@ -1,0 +1,78 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://hub.it-handwerk-stuttgart.de/public-data.schema.json",
+  "title": "Knowledge Hub — öffentlicher Datenvertrag",
+  "description": "Sanitizierte, aggregierte Kennzahlen für die öffentliche Website. Whitelist: nur die hier definierten Felder sind öffentlich (PUBLIC_DATA_POLICY). Niemals Pfade, Projektnamen, Secrets, IPs/Ports.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "generated_at", "build_id", "stale_after_days", "tests", "graph", "benchmark", "audit"],
+  "properties": {
+    "schema_version": {"type": "string", "const": "1.0"},
+    "generated_at": {"type": "string", "format": "date-time"},
+    "build_id": {"type": "string", "pattern": "^pd-[0-9A-Za-z]+-[0-9a-f]{8}$"},
+    "stale_after_days": {"type": "integer", "minimum": 1, "maximum": 90},
+    "tests": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total", "passed", "failed"],
+      "properties": {
+        "total": {"type": "integer", "minimum": 0, "maximum": 100000},
+        "passed": {"type": "integer", "minimum": 0, "maximum": 100000},
+        "failed": {"type": "integer", "minimum": 0, "maximum": 100000}
+      }
+    },
+    "graph": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["projects", "nodes", "edges", "communities"],
+      "properties": {
+        "projects": {"type": "integer", "minimum": 0, "maximum": 100000},
+        "nodes": {"type": "integer", "minimum": 0, "maximum": 100000000},
+        "edges": {"type": "integer", "minimum": 0, "maximum": 100000000},
+        "communities": {"type": "integer", "minimum": 0, "maximum": 1000000}
+      }
+    },
+    "benchmark": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["measured_at", "questions", "projects", "budgets", "engines"],
+      "properties": {
+        "measured_at": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"},
+        "questions": {"type": "integer", "minimum": 1, "maximum": 100000},
+        "projects": {"type": "integer", "minimum": 1, "maximum": 100000},
+        "budgets": {"type": "array", "items": {"type": "integer", "minimum": 1, "maximum": 100000}, "minItems": 1, "maxItems": 8},
+        "engines": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["hit_rate_400", "hit_rate_1200"],
+            "properties": {
+              "hit_rate_400": {"type": "number", "minimum": 0, "maximum": 1},
+              "hit_rate_1200": {"type": "number", "minimum": 0, "maximum": 1}
+            }
+          },
+          "propertyNames": {"enum": ["hybrid", "graphify", "semantic", "rag"]}
+        }
+      }
+    },
+    "audit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["runs_passed", "open_critical", "open_high"],
+      "properties": {
+        "runs_passed": {"type": "integer", "minimum": 0, "maximum": 100000},
+        "open_critical": {"type": "integer", "minimum": 0, "maximum": 100000},
+        "open_high": {"type": "integer", "minimum": 0, "maximum": 100000}
+      }
+    },
+    "release": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "commit": {"type": "string", "pattern": "^[0-9a-f]{7}$"}
+      }
+    }
+  }
+}
