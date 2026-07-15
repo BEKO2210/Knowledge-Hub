@@ -27,10 +27,30 @@ mkdir -p "$REPO/$NAME"
 rsync -a --delete "$SRC/" "$REPO/$NAME/graphify-out/"
 cd "$REPO"
 git add -A
-if git diff --cached --quiet; then echo "no changes for $NAME"; exit 0; fi
+if git diff --cached --quiet; then
+  echo "SYNC project=$NAME local=succeeded remote=skipped detail=keine-aenderung"
+  exit 0
+fi
 git commit -q -m "graphify sync: $NAME ($(date -u +%Y-%m-%dT%H:%MZ))"
-if FEHLER=$(git push -q origin main 2>&1); then
-  echo "synced + pushed: $NAME"
+
+# Remote-Push mit Selbstheilung (SYNC_CONTRACT, hub-audit Run 13):
+# backup.py pusht hub-backups über einen eigenen Klon in dasselbe Repo — origin läuft
+# uns damit regelmäßig davon (non-fast-forward). Heilung: fetch + rebase; bei Konflikt
+# an Graph-Dateien gewinnt UNSERE frisch abgenommene Generation (-X theirs beim Rebase
+# = die eigenen, neu aufgespielten Commits; im Sandbox-Test bewiesen). Scheitert der
+# Rebase, wird er abgebrochen: lokaler Stand bleibt intakt, Status ehrlich degraded —
+# der nächste Sync versucht es erneut. Der lokale Sync (Hub liest von hier) ist damit
+# NIE vom Remote-Zustand abhängig.
+push_versuch() { git push -q origin main 2>&1; }
+if FEHLER=$(push_versuch); then
+  echo "SYNC project=$NAME local=succeeded remote=succeeded detail=pushed"
+elif timeout 60 git fetch -q origin && git rebase -q -X theirs origin/main 2>/dev/null; then
+  if FEHLER=$(push_versuch); then
+    echo "SYNC project=$NAME local=succeeded remote=succeeded detail=pushed-nach-rebase"
+  else
+    echo "SYNC project=$NAME local=succeeded remote=optional_failed detail=$(echo "$FEHLER" | grep -m1 -oE '(\[rejected\].*|fatal:.*|error:.*)' | tr ' ' '_' | head -c120)"
+  fi
 else
-  echo "synced locally: $NAME — push fehlgeschlagen: $(echo "$FEHLER" | grep -m1 -oE '(\[rejected\].*|fatal:.*|error:.*)' || echo "$FEHLER" | head -1)"
+  git rebase --abort 2>/dev/null || true
+  echo "SYNC project=$NAME local=succeeded remote=optional_failed detail=rebase-konflikt-abgebrochen-naechster-lauf-versucht-erneut"
 fi
