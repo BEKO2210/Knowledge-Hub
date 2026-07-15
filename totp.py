@@ -133,18 +133,24 @@ def enable(code: str) -> list[str] | None:
     Bereits aktiv ⇒ NICHT neu erzeugen: Ein zweiter Aufruf mit demselben, noch
     gültigen Code (Doppelklick, Enter+Klick, zweites Gerät) würde sonst frische
     Recovery-Codes anlegen und die gerade angezeigten still entwerten (R17-1).
+
+    Die ganze Kette Lesen→Prüfen→Schreiben läuft unter EINER Vault-Transaktion
+    (R20-1): Zwei gleichzeitige Aktivierungen (beide via asyncio.to_thread) lasen
+    sonst beide enabled=False, erzeugten je ein eigenes Recovery-Set, und der
+    Letzte überschrieb — der Nutzer bekam Codes gezeigt, die nicht funktionierten.
     """
-    st = _load()
-    if st.get("enabled"):
-        return None
-    secret = st.get("secret")
-    if not secret or not verify_code(secret, code):
-        return None
-    recovery = _gen_recovery()
-    st["enabled"] = True
-    st["recovery"] = [hashlib.sha256(c.encode()).hexdigest() for c in recovery]
-    _save(st)
-    vault.audit("2FA-ENABLE", "aktiviert", client="web-ui")
+    with vault.transaction():
+        st = _load()
+        if st.get("enabled"):
+            return None
+        secret = st.get("secret")
+        if not secret or not verify_code(secret, code):
+            return None
+        recovery = _gen_recovery()
+        st["enabled"] = True
+        st["recovery"] = [hashlib.sha256(c.encode()).hexdigest() for c in recovery]
+        _save(st)
+        vault.audit("2FA-ENABLE", "aktiviert", client="web-ui")
     return recovery
 
 
@@ -159,19 +165,23 @@ def disable() -> None:
 def check(code: str) -> bool:
     """Code oder Wiederherstellungscode beim Login prüfen.
 
-    Ein verwendeter Wiederherstellungscode wird sofort verbraucht.
+    Ein verwendeter Wiederherstellungscode wird sofort verbraucht — Lesen und
+    Verbrauchen laufen unter EINER Vault-Transaktion (R20-1), sonst ließen zwei
+    gleichzeitige Logins denselben Einmal-Code doppelt durch (beide lasen ihn als
+    noch gültig, bevor einer ihn strich).
     """
-    st = _load()
-    if not st.get("enabled"):
-        return True
-    secret = st.get("secret", "")
-    if secret and verify_code(secret, code):
-        return True
-    # Wiederherstellungscode?
-    h = hashlib.sha256((code or "").strip().encode()).hexdigest()
-    if h in st.get("recovery", []):
-        st["recovery"].remove(h)
-        _save(st)
-        vault.audit("2FA-RECOVERY", f"Code verbraucht ({len(st['recovery'])} übrig)", client="web-ui")
-        return True
+    with vault.transaction():
+        st = _load()
+        if not st.get("enabled"):
+            return True
+        secret = st.get("secret", "")
+        if secret and verify_code(secret, code):
+            return True
+        # Wiederherstellungscode?
+        h = hashlib.sha256((code or "").strip().encode()).hexdigest()
+        if h in st.get("recovery", []):
+            st["recovery"].remove(h)
+            _save(st)
+            vault.audit("2FA-RECOVERY", f"Code verbraucht ({len(st['recovery'])} übrig)", client="web-ui")
+            return True
     return False

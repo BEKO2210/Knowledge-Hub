@@ -39,6 +39,7 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
+from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 
@@ -63,6 +64,7 @@ SECRET_NAME_RE = re.compile(r"^[\w.\- ]{1,64}$")
 SECRET_VALUE_MAX = 20_000
 
 _RLOCK = threading.RLock()
+_TX = threading.local()  # Tiefe der verschachtelten Transaktion je Thread (Reentranz)
 
 _AAD = b"knowledge-mcp:vault:v1"  # v1-Daten (Migration)
 _AAD_DATA = b"knowledge-hub:vault:data"  # v2-Nutzdaten
@@ -80,6 +82,14 @@ _mk: bytes | None = None
 
 class VaultLocked(RuntimeError):
     """Der Vault ist gesperrt — es muss erst entsperrt werden (Anmeldung)."""
+
+
+class VaultCorrupt(VaultLocked):
+    """Die Vault-Datei ist beschädigt (kaputtes JSON oder nicht entschlüsselbar).
+
+    Unterklasse von VaultLocked, damit ein beschädigter Vault überall dort, wo
+    ohnehin ‚Vault nicht verfügbar' behandelt wird, sauber greift — statt als
+    nackter JSONDecodeError/InvalidTag bis in einen 500-Traceback durchzuschlagen."""
 
 
 # ---------------------------------------------------------------------------
@@ -114,7 +124,13 @@ def _read_file() -> dict | None:
         return None
     raw = VAULT_PATH.read_bytes()
     if raw[:1] == b"{":
-        return json.loads(raw)
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError as e:
+            # Beschädigte Datei (z. B. Torn-Write, halb überspielte Sicherung):
+            # sauber melden statt als roher JSONDecodeError einen 500-Traceback
+            # (oder — schlimmer — eine 400 „kein gültiges JSON") zu erzeugen.
+            raise VaultCorrupt(f"Vault-Datei ist beschädigt (kein gültiges JSON): {e}") from e
     return {"version": 1, "raw": raw}  # altes Format
 
 
@@ -154,15 +170,38 @@ def _transaktion():
     Ohne das ging bei parallelen Aufrufen die letzte Änderung verloren: Alle lasen
     denselben Stand, alle schrieben ihren eigenen zurück, und wer zuletzt schrieb,
     löschte die Secrets der anderen.
+
+    **Reentrant:** Ein Aufrufer kann mehrere Secret-Operationen (z. B. Lesen +
+    Zurückschreiben desselben Blobs, wie es totp für den 2FA-Zustand braucht) in
+    EINE Transaktion klammern — die inneren secret_get/secret_set-Aufrufe re-betreten
+    dieselbe Sperre, statt eine zweite Dateisperre auf einem zweiten Deskriptor zu
+    ziehen (das würde im selben Thread verklemmen). Gezählt wird die Tiefe pro Thread;
+    die flock wird nur auf Ebene 0 genommen und wieder freigegeben.
     """
     with _RLOCK:
-        LOCK_PATH.touch(exist_ok=True)
-        with LOCK_PATH.open("r+") as fh:
+        depth = getattr(_TX, "depth", 0)
+        if depth == 0:
+            LOCK_PATH.touch(exist_ok=True)
+            fh = LOCK_PATH.open("r+")
             fcntl.flock(fh, fcntl.LOCK_EX)
-            try:
-                yield
-            finally:
-                fcntl.flock(fh, fcntl.LOCK_UN)
+            _TX.fh = fh
+        _TX.depth = depth + 1
+        try:
+            yield
+        finally:
+            _TX.depth -= 1
+            if _TX.depth == 0:
+                try:
+                    fcntl.flock(_TX.fh, fcntl.LOCK_UN)
+                finally:
+                    _TX.fh.close()
+                    _TX.fh = None
+
+
+# Öffentlicher Name für Module, die mehrere Secret-Operationen atomar zusammenfassen
+# müssen (totp: den 2FA-Blob als Ganzes lesen-ändern-schreiben, ohne Zwischenfunker).
+def transaction():
+    return _transaktion()
 
 
 def _new_vault(password: str, mk: bytes | None = None, secrets_map: dict | None = None) -> dict:
@@ -199,7 +238,13 @@ def _read_data(doc: dict, mk: bytes) -> dict:
     d = doc.get("data")
     if not d:
         return {}
-    return json.loads(AESGCM(mk).decrypt(_unb64(d["nonce"]), _unb64(d["ct"]), _AAD_DATA))
+    try:
+        pt = AESGCM(mk).decrypt(_unb64(d["nonce"]), _unb64(d["ct"]), _AAD_DATA)
+        return json.loads(pt)
+    except (InvalidTag, ValueError, KeyError, json.JSONDecodeError) as e:
+        # Datenblock nicht entschlüsselbar/lesbar, obwohl der Schlüssel stimmt:
+        # die Datei ist beschädigt oder manipuliert — sauber melden.
+        raise VaultCorrupt(f"Vault-Datenblock ist beschädigt: {type(e).__name__}") from e
 
 
 # ---------------------------------------------------------------------------
@@ -212,7 +257,11 @@ def _migrate_v1(doc: dict) -> dict:
     if not ek:
         raise VaultLocked("Alter Vault, aber kein VAULT_KEY in der Umgebung — Migration unmöglich.")
     blob = doc["raw"]
-    store = json.loads(AESGCM(ek).decrypt(blob[:12], blob[12:], _AAD))
+    try:
+        store = json.loads(AESGCM(ek).decrypt(blob[:12], blob[12:], _AAD))
+    except (InvalidTag, ValueError, KeyError, json.JSONDecodeError) as e:
+        # Kein gültiger v1-Vault (Müll/abgeschnitten): nicht als Migration versuchen.
+        raise VaultCorrupt(f"Vault-Datei ist beschädigt (kein lesbarer v1-Inhalt): {type(e).__name__}") from e
 
     backup = VAULT_PATH.with_name(f"vault.enc.v1-{time.strftime('%Y%m%d-%H%M%S')}")
     backup.write_bytes(blob)

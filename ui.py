@@ -82,6 +82,20 @@ async def _on_gesperrt(request: Request, exc: Exception) -> JSONResponse:
     return JSONResponse({"error": T("Der Vault ist gesperrt — bitte neu anmelden.")}, status_code=423)
 
 
+async def _on_beschaedigt(request: Request, exc: Exception) -> JSONResponse:
+    """Beschädigte Vault-Datei — eindeutiger Serverfehler mit Handlungshinweis,
+    kein irreführendes ‚kein gültiges JSON' (400) und kein nackter Traceback."""
+    ref = _rnd.token_hex(4)
+    _log_error(ref, request, exc)
+    return JSONResponse(
+        {
+            "error": T("Die Vault-Datei ist beschädigt. Bitte die letzte Sicherung einspielen."),
+            "ref": ref,
+        },
+        status_code=500,
+    )
+
+
 async def _on_nicht_gefunden(request: Request, exc: Exception) -> JSONResponse:
     if request.url.path.startswith("/ui/api/"):
         return JSONResponse({"error": T("Diesen Endpunkt gibt es nicht.")}, status_code=404)
@@ -343,6 +357,7 @@ ui_app = Starlette(
     exception_handlers={
         json.JSONDecodeError: _on_kaputte_eingabe,
         BadJSON: _on_kein_objekt,
+        vault.VaultCorrupt: _on_beschaedigt,
         vault.VaultLocked: _on_gesperrt,
         404: _on_nicht_gefunden,
         Exception: _on_unerwartet,
