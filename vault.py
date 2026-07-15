@@ -450,6 +450,10 @@ def audit(action: str, name: str, client: str = "-") -> None:
         f"{_clean(action, 24)} {_clean(name)} client={_clean(client, 24)}\n"
     )
     with AUDIT_PATH.open("a") as fh:
+        # 0600 bei jedem Schreiben erzwingen: schützt Secret-Namen + Zugriffszeiten
+        # vor Gruppen-/Weltlesern und heilt eine mit falscher umask (664) angelegte
+        # Alt-Datei beim nächsten Eintrag selbst.
+        os.fchmod(fh.fileno(), 0o600)
         fh.write(line)
 
 

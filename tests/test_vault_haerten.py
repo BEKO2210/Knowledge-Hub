@@ -69,6 +69,15 @@ def test_paralleler_recovery_code_wird_nur_einmal_akzeptiert(fresh_vault):
     assert totp.check(one) is False
 
 
+# --- R20-3: Datei-Rechte des Audit-Logs --------------------------------------
+def test_audit_log_ist_nur_fuer_den_eigentuemer_lesbar(fresh_vault):
+    """Das Audit-Log listet Secret-NAMEN und Zugriffszeiten (Metadaten) — es darf
+    nicht gruppen-/weltlesbar sein, sondern 0600 wie die vault.enc selbst."""
+    vault.secret_set("api", "geheim", client="test")  # erzeugt/schreibt audit.log
+    mode = vault.AUDIT_PATH.stat().st_mode & 0o777
+    assert mode == 0o600, f"audit.log hat Rechte {oct(mode)}, erwartet 0o600"
+
+
 # --- R20-2: kaputte Vault-Datei ----------------------------------------------
 def test_halbe_vault_datei_meldet_sauber_statt_absturz(fresh_vault):
     vault.secret_set("api", "geheim", client="test")
