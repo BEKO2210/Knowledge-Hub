@@ -107,6 +107,7 @@
   <!-- GRAPH -->
   <section class="tab on" id="tab-graph" aria-label="Wissensgraphen" data-en-title="Knowledge graphs">
     <div id="graphbar">
+      <button class="btn ghost icon" data-act="report" aria-label="Report anzeigen" data-en-title="Show report"><svg class="ic" viewBox="0 0 24 24"><use href="#i-doc"/></svg></button>
       <select id="proj" data-change="loadgraph" aria-label="Projekt wählen" data-en-title="Select project"></select>
       <div class="searchwrap">
         <svg class="ic" viewBox="0 0 24 24"><use href="#i-search"/></svg>
@@ -117,7 +118,6 @@
         <input type="range" id="limit" min="100" max="2000" step="50" value="2000" aria-label="Anzahl Knoten" data-en-title="Number of nodes"
                data-bind="limit">
       </div>
-      <button class="btn ghost icon" data-act="report" aria-label="Report anzeigen" data-en-title="Show report"><svg class="ic" viewBox="0 0 24 24"><use href="#i-doc"/></svg></button>
       <span id="stats"></span>
     </div>
     <div id="graphwrap">

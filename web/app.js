@@ -581,29 +581,10 @@ function openMore() { $('moredlg').showModal(); }
 function haptic(ms = 8) { try { navigator.vibrate && navigator.vibrate(ms); } catch {} }
 /* Horizontaler Wisch wechselt zwischen den Kern-Tabs — außer auf dem Graph
    (dort ist die Fläche fürs Verschieben reserviert) und über dem Detail-Sheet. */
-const SWIPE_TABS = ['graph', 'ask', 'secrets', 'mapping', 'connect'];
-(() => {
-  const main = document.querySelector('main');
-  if (!main) return;
-  let sx = null, sy = null, onCanvas = false;
-  main.addEventListener('touchstart', e => {
-    if (e.touches.length !== 1) { sx = null; return; }
-    const t = e.target;
-    onCanvas = !!(t.closest && (t.closest('#cv') || t.closest('#side') || t.closest('#legend') || t.closest('#searchdrop')));
-    sx = e.touches[0].clientX; sy = e.touches[0].clientY;
-  }, { passive: true });
-  main.addEventListener('touchend', e => {
-    if (sx === null || onCanvas) { sx = null; return; }
-    const dx = e.changedTouches[0].clientX - sx, dy = e.changedTouches[0].clientY - sy;
-    sx = null;
-    if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 2) return;   // nur klar horizontale Wische
-    const cur = document.querySelector('.tab.on')?.id?.replace('tab-', '');
-    const i = SWIPE_TABS.indexOf(cur);
-    if (i < 0) return;
-    const next = SWIPE_TABS[i + (dx < 0 ? 1 : -1)];
-    if (next) { haptic(); tab(next); }
-  }, { passive: true });
-})();
+/* Wisch-Navigation zwischen Tabs: ENTFERNT (Belkis, 2026-07-15). Horizontale Gesten
+   gehören auf dem Handy dem Inhalt — Graph-Pan, Knoten-Slider, scrollbare Panels
+   wurden ständig als Tab-Wechsel fehlgedeutet und warfen einen mitten in den
+   Fragen-Tab. Tab-Wechsel läuft ausschließlich über die untere Navigation. */
 
 /* ================= Einführung / Tour ================= */
 const TOUR = [
