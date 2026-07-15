@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hmac
+import json
 import os
 from pathlib import Path
 
@@ -11,11 +12,36 @@ from starlette.requests import Request
 import config
 import vault
 
+
+class BadJSON(Exception):
+    """Der Body war kein JSON-Objekt: leer, unlesbar, oder ein falscher Typ
+    (Liste, Zahl, String). Wird global als 400 beantwortet — so kann kein
+    Endpunkt mehr an ``body.get(...)`` auf einem Nicht-Objekt abstürzen (500)."""
+
+
+async def json_object(request: Request) -> dict:
+    """Body als JSON-Objekt lesen oder mit :class:`BadJSON` abbrechen.
+
+    Alle schreibenden Endpunkte erwarten ein Objekt und greifen mit ``.get()``
+    darauf zu. Ein gültiges, aber typfremdes JSON (``[1,2]``, ``"text"``, ``42``)
+    ließ diesen Zugriff bisher als unerwarteten Serverfehler enden. Diese eine
+    Stelle macht daraus einen sauberen Aufruferfehler.
+    """
+    try:
+        data = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        raise BadJSON from None
+    if not isinstance(data, dict):
+        raise BadJSON
+    return data
+
+
 CFG = config.load()
 KNOWLEDGE_ROOT = config.path(os.environ.get("KNOWLEDGE_ROOT", CFG["paths"]["knowledge_root"]))
 GRAPHIFY_BIN = os.environ.get("GRAPHIFY_BIN", str(config.path(CFG["paths"]["graphify_bin"])))
 AUDIT_PATH = vault.AUDIT_PATH
 DATA_DIR = Path(os.environ.get("KMCP_DATA_DIR", str(Path(__file__).resolve().parent.parent)))
+
 
 def _projects() -> list[str]:
     return sorted(
@@ -35,16 +61,13 @@ def _check_password(password: str) -> bool:
         return False
     st = vault.status()
     if st.get("has_password"):
-        return vault.unlock(password)     # entsperrt zugleich den Vault
+        return vault.unlock(password)  # entsperrt zugleich den Vault
     legacy = os.environ.get("OAUTH_PASSWORD", "")
     return bool(legacy) and hmac.compare_digest(password, legacy)
 
 
 def _client_ip(request: Request) -> str:
-    return (
-        request.headers.get("cf-connecting-ip")
-        or (request.client.host if request.client else "?")
-    )
+    return request.headers.get("cf-connecting-ip") or (request.client.host if request.client else "?")
 
 
 def _bearer(request: Request) -> str:

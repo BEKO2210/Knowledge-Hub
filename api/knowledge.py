@@ -17,7 +17,7 @@ import config
 import graph_context
 import semantic
 import vault
-from api.common import DATA_DIR, GRAPHIFY_BIN, KNOWLEDGE_ROOT, _projects
+from api.common import DATA_DIR, GRAPHIFY_BIN, KNOWLEDGE_ROOT, _projects, json_object
 from api.i18n import T
 
 
@@ -41,7 +41,12 @@ async def graph(request: Request) -> JSONResponse:
     name = request.path_params["project"]
     if name not in _projects():
         return JSONResponse({"error": "unknown project"}, status_code=404)
-    limit = int(request.query_params.get("limit", 2000))
+    # Ein unsinniges ?limit= (Buchstaben) ist ein Aufruferfehler, kein Serverabsturz —
+    # der Endpunkt fällt auf den Standardwert zurück statt mit 500 zu enden.
+    try:
+        limit = int(request.query_params.get("limit", 2000))
+    except (TypeError, ValueError):
+        limit = 2000
     g = json.loads((KNOWLEDGE_ROOT / name / "graphify-out" / "graph.json").read_text())
     nodes = g.get("nodes", [])
     links = g.get("links", g.get("edges", []))
@@ -285,7 +290,7 @@ async def graph_ask(request: Request) -> JSONResponse:
     name = request.path_params["project"]
     if name not in _projects():
         return JSONResponse({"error": T("Unbekanntes Projekt")}, status_code=404)
-    body = await request.json()
+    body = await json_object(request)
     question = str(body.get("question", "")).strip()
     if len(question) < 3:
         return JSONResponse({"error": T("Bitte eine Frage eingeben.")}, status_code=400)

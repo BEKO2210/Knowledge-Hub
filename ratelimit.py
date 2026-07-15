@@ -26,6 +26,7 @@ _LIMITS = {
     "login": (900, 5),  # 5 Fehlversuche / 15 min
     "setup": (300, 10),  # frisches System: 10 / 5 min
     "write": (60, 120),  # 120 schreibende UI-Aufrufe / min (Drossel, kein Fehlversuchszähler)
+    "register": (3600, 30),  # 30 Client-Registrierungen / Std / IP (Drossel, unauthentifiziert)
 }
 
 

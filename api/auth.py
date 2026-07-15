@@ -13,21 +13,19 @@ import config
 import oauth
 import ratelimit
 import vault
-from api.common import _bearer, _check_password, _client_ip
+from api.common import _bearer, _check_password, _client_ip, json_object
 from api.i18n import T
 
 
 async def login(request: Request) -> JSONResponse:
     try:
-        body = await request.json()
+        body = await json_object(request)
     except Exception:
         return JSONResponse({"error": "bad request"}, status_code=400)
     ip = _client_ip(request)
     if not ratelimit.check("login", ip):
         vault.audit("LOGIN-BLOCKED", ip, client="web-ui")
-        return JSONResponse(
-            {"error": T("Zu viele Fehlversuche — bitte 15 Minuten warten.")}, status_code=429
-        )
+        return JSONResponse({"error": T("Zu viele Fehlversuche — bitte 15 Minuten warten.")}, status_code=429)
     password = str(body.get("password", ""))
     code = str(body.get("code", "")).strip()
     # Passwortprüfung läuft über den Vault: Wenn sich damit der Hauptschlüssel
@@ -79,19 +77,23 @@ async def sessions_list(request: Request) -> JSONResponse:
     # unsichtbar bliebe. Es lässt sich nicht per Klick widerrufen (dafür muss der
     # Wert in der env-Datei getauscht werden) — aber man muss wissen, dass es existiert.
     if os.environ.get("MCP_TOKEN"):
-        items.append({
-            "id": "static",
-            "label": T("Statisches Token (env-Datei)"),
-            "kind": "static",
-            "created": None,
-            "last_seen": None,
-            "expires": None,
-            "ua": "",
-            "current": _bearer(request) == os.environ["MCP_TOKEN"],
-            "revocable": False,
-            "note": T("Läuft nie ab. Zum Widerrufen den Wert MCP_TOKEN in "
-                      "~/.config/knowledge-mcp/env ersetzen und den Dienst neu starten."),
-        })
+        items.append(
+            {
+                "id": "static",
+                "label": T("Statisches Token (env-Datei)"),
+                "kind": "static",
+                "created": None,
+                "last_seen": None,
+                "expires": None,
+                "ua": "",
+                "current": _bearer(request) == os.environ["MCP_TOKEN"],
+                "revocable": False,
+                "note": T(
+                    "Läuft nie ab. Zum Widerrufen den Wert MCP_TOKEN in "
+                    "~/.config/knowledge-mcp/env ersetzen und den Dienst neu starten."
+                ),
+            }
+        )
     return JSONResponse({"sessions": items, "current": me})
 
 
@@ -127,13 +129,15 @@ async def connect_info(request: Request) -> JSONResponse:
         qr = totp.qr_svg(mcp_url)
     except Exception:  # noqa: BLE001 - QR ist Beiwerk, darf die Seite nicht kippen
         qr = ""
-    return JSONResponse({
-        "public_url": public,
-        "mcp_url": mcp_url,
-        "qr": qr,
-        "hub": cfg["branding"]["name"],
-        "https": public.startswith("https://"),
-    })
+    return JSONResponse(
+        {
+            "public_url": public,
+            "mcp_url": mcp_url,
+            "qr": qr,
+            "hub": cfg["branding"]["name"],
+            "https": public.startswith("https://"),
+        }
+    )
 
 
 CONNECT_LABEL_RE = re.compile(r"^[\w.\- ()]{1,60}$")
@@ -149,7 +153,7 @@ async def connect_token(request: Request) -> JSONResponse:
     """
     import secrets as _secrets
 
-    body = await request.json()
+    body = await json_object(request)
     label = str(body.get("label", "")).strip()[:60] or "MCP-Client"
     if not CONNECT_LABEL_RE.match(label):
         return JSONResponse({"error": T("Name enthält ungültige Zeichen.")}, status_code=400)
@@ -161,4 +165,6 @@ async def connect_token(request: Request) -> JSONResponse:
     state["tokens"][oauth._sha(payload["access_token"])]["exp"] = oauth._now() + DEVICE_TOKEN_TTL
     oauth._save(state)
     vault.audit("CONNECT-TOKEN", label, client="web-ui")
-    return JSONResponse({"token": payload["access_token"], "label": label, "ttl_days": DEVICE_TOKEN_TTL // 86400})
+    return JSONResponse(
+        {"token": payload["access_token"], "label": label, "ttl_days": DEVICE_TOKEN_TTL // 86400}
+    )

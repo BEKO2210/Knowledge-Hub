@@ -24,7 +24,7 @@ from starlette.routing import Route
 import config
 import vault
 from api import auth, i18n, knowledge, mapping, secrets, system
-from api.common import CFG, DATA_DIR
+from api.common import CFG, DATA_DIR, BadJSON
 from api.i18n import T
 
 # ---------------------------------------------------------------------------
@@ -71,6 +71,11 @@ async def _on_unerwartet(request: Request, exc: Exception) -> JSONResponse:
 async def _on_kaputte_eingabe(request: Request, exc: Exception) -> JSONResponse:
     """Unlesbares JSON ist ein Fehler des Aufrufers, kein Serverabsturz."""
     return JSONResponse({"error": T("Die Anfrage war kein gültiges JSON.")}, status_code=400)
+
+
+async def _on_kein_objekt(request: Request, exc: Exception) -> JSONResponse:
+    """Leerer, unlesbarer oder typfremder Body (Liste/Zahl/String statt Objekt)."""
+    return JSONResponse({"error": T("Die Anfrage muss ein JSON-Objekt sein.")}, status_code=400)
 
 
 async def _on_gesperrt(request: Request, exc: Exception) -> JSONResponse:
@@ -337,6 +342,7 @@ ui_app = Starlette(
     ],
     exception_handlers={
         json.JSONDecodeError: _on_kaputte_eingabe,
+        BadJSON: _on_kein_objekt,
         vault.VaultLocked: _on_gesperrt,
         404: _on_nicht_gefunden,
         Exception: _on_unerwartet,

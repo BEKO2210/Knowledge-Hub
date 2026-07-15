@@ -125,6 +125,8 @@ async def setup_submit(request: Request) -> JSONResponse:
         body = await request.json()
     except Exception:
         return JSONResponse({"error": "bad request"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "bad request"}, status_code=400)
 
     password = str(body.get("password", ""))
     if len(password) < 8:

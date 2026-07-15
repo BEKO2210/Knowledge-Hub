@@ -6,7 +6,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 import vault
-from api.common import AUDIT_PATH
+from api.common import AUDIT_PATH, json_object
 from api.i18n import T
 
 # Eine Quelle für beide Wege in den Vault (Oberfläche UND MCP) — definiert in vault.py.
@@ -20,7 +20,7 @@ async def secrets_list(request: Request) -> JSONResponse:
 
 
 async def secrets_set(request: Request) -> JSONResponse:
-    body = await request.json()
+    body = await json_object(request)
     name, value = str(body.get("name", "")).strip(), str(body.get("value", ""))
     if not name or not value:
         return JSONResponse({"error": T("Name und Wert sind Pflicht")}, status_code=400)

@@ -166,7 +166,8 @@ def revoke_all(except_sid: str = "") -> int:
     state = _load()
     now = _now()
     sids = {
-        t["sid"] for t in state["tokens"].values()
+        t["sid"]
+        for t in state["tokens"].values()
         if t.get("sid") and t["sid"] != except_sid and t["exp"] > now
     }
     state["tokens"] = {h: t for h, t in state["tokens"].items() if t.get("sid") == except_sid}
@@ -184,6 +185,7 @@ def session_of(token: str) -> str:
 # --------------------------------------------------------------------------
 # discovery metadata
 # --------------------------------------------------------------------------
+
 
 def _as_metadata(request: Request) -> JSONResponse:
     return JSONResponse(
@@ -216,15 +218,56 @@ def _pr_metadata(request: Request) -> JSONResponse:
 # dynamic client registration (RFC 7591)
 # --------------------------------------------------------------------------
 
+# Dynamische Client-Registrierung ist per RFC 7591 offen (claude.ai holt sich hier
+# ohne Anmeldung eine client_id). Offen heißt nicht schrankenlos: eine Drossel pro IP
+# und eine harte Obergrenze halten die Zustandsdatei klein. Bei Erreichen der Grenze
+# werden verwaiste Clients (ohne gültige Tokens) verworfen — der jüngste zuerst behalten.
+MAX_CLIENTS = 500
+
+
+def _prune_clients(state: dict) -> None:
+    if len(state["clients"]) <= MAX_CLIENTS:
+        return
+    referenced = {t.get("client_id") for bucket in ("tokens", "refresh") for t in state[bucket].values()}
+    orphans = sorted(
+        (cid for cid in state["clients"] if cid not in referenced),
+        key=lambda cid: state["clients"][cid].get("created", 0),
+    )
+    while len(state["clients"]) > MAX_CLIENTS and orphans:
+        del state["clients"][orphans.pop(0)]
+
+
 async def _register(request: Request) -> JSONResponse:
+    import ratelimit
+
+    ip = request.headers.get("cf-connecting-ip") or (request.client.host if request.client else "?")
+    erlaubt, _ = ratelimit.throttle("register", ip)
+    if not erlaubt:
+        return JSONResponse(
+            {"error": "temporarily_unavailable", "error_description": "too many registrations"},
+            status_code=429,
+        )
     try:
         body = await request.json()
     except Exception:
         return JSONResponse({"error": "invalid_client_metadata"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "invalid_client_metadata"}, status_code=400)
     redirect_uris = body.get("redirect_uris") or []
-    if not redirect_uris or not all(
-        u.startswith("https://") or u.startswith("http://localhost") or u.startswith("http://127.0.0.1")
-        for u in redirect_uris
+    if (
+        not isinstance(redirect_uris, list)
+        or not redirect_uris
+        or len(redirect_uris) > 10
+        or not all(
+            isinstance(u, str)
+            and len(u) <= 2048
+            and (
+                u.startswith("https://")
+                or u.startswith("http://localhost")
+                or u.startswith("http://127.0.0.1")
+            )
+            for u in redirect_uris
+        )
     ):
         return JSONResponse({"error": "invalid_redirect_uri"}, status_code=400)
     state = _load()
@@ -234,6 +277,7 @@ async def _register(request: Request) -> JSONResponse:
         "name": str(body.get("client_name", ""))[:100],
         "created": _now(),
     }
+    _prune_clients(state)
     _save(state)
     return JSONResponse(
         {
@@ -341,18 +385,31 @@ async def _authorize(request: Request):
 
     hidden = "".join(
         f'<input type="hidden" name="{k}" value="{html.escape(str(params.get(k, "")), quote=True)}">'
-        for k in ("response_type", "client_id", "redirect_uri", "state", "code_challenge",
-                  "code_challenge_method", "scope", "resource")
+        for k in (
+            "response_type",
+            "client_id",
+            "redirect_uri",
+            "state",
+            "code_challenge",
+            "code_challenge_method",
+            "scope",
+            "resource",
+        )
         if params.get(k)
     )
-    return HTMLResponse(_PAGE.format(
-        client=html.escape(client["name"] or "Ein MCP-Client"), error=error_html, hidden=hidden,
-    ))
+    return HTMLResponse(
+        _PAGE.format(
+            client=html.escape(client["name"] or "Ein MCP-Client"),
+            error=error_html,
+            hidden=hidden,
+        )
+    )
 
 
 # --------------------------------------------------------------------------
 # token endpoint
 # --------------------------------------------------------------------------
+
 
 def _issue(state: dict, client_id: str, sid: str = "", user_agent: str = "") -> dict:
     """Access- + Refresh-Token ausstellen. `sid` klammert beide zu einer Sitzung —
@@ -362,8 +419,12 @@ def _issue(state: dict, client_id: str, sid: str = "", user_agent: str = "") -> 
     sid = sid or secrets.token_urlsafe(9)
     now = _now()
     meta = {"client_id": client_id, "sid": sid, "created": now}
-    state["tokens"][_sha(access)] = {**meta, "exp": now + ACCESS_TTL,
-                                     "last_seen": now, "ua": user_agent[:120]}
+    state["tokens"][_sha(access)] = {
+        **meta,
+        "exp": now + ACCESS_TTL,
+        "last_seen": now,
+        "ua": user_agent[:120],
+    }
     state["refresh"][_sha(refresh)] = {**meta, "exp": now + REFRESH_TTL}
     return {
         "access_token": access,
@@ -388,7 +449,9 @@ async def _token(request: Request) -> JSONResponse:
         verifier = str(form.get("code_verifier", ""))
         expected = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
         if not hmac.compare_digest(expected, entry["code_challenge"]):
-            return JSONResponse({"error": "invalid_grant", "error_description": "PKCE failed"}, status_code=400)
+            return JSONResponse(
+                {"error": "invalid_grant", "error_description": "PKCE failed"}, status_code=400
+            )
         ua = request.headers.get("user-agent", "")
         payload = _issue(state, entry["client_id"], user_agent=ua)
         _save(state)
@@ -400,20 +463,26 @@ async def _token(request: Request) -> JSONResponse:
         if entry is None or entry["exp"] < _now():
             return JSONResponse({"error": "invalid_grant"}, status_code=400)
         # Sitzung bleibt dieselbe -> das Gerät behält seinen Eintrag in der Liste
-        payload = _issue(state, entry["client_id"], sid=entry.get("sid", ""),
-                         user_agent=request.headers.get("user-agent", ""))
+        payload = _issue(
+            state,
+            entry["client_id"],
+            sid=entry.get("sid", ""),
+            user_agent=request.headers.get("user-agent", ""),
+        )
         _save(state)
         return JSONResponse(payload)
 
     return JSONResponse({"error": "unsupported_grant_type"}, status_code=400)
 
 
-oauth_app = Starlette(routes=[
-    Route("/.well-known/oauth-authorization-server", _as_metadata),
-    Route("/.well-known/oauth-authorization-server/{path:path}", _as_metadata),
-    Route("/.well-known/oauth-protected-resource", _pr_metadata),
-    Route("/.well-known/oauth-protected-resource/{path:path}", _pr_metadata),
-    Route("/oauth/register", _register, methods=["POST"]),
-    Route("/oauth/authorize", _authorize, methods=["GET", "POST"]),
-    Route("/oauth/token", _token, methods=["POST"]),
-])
+oauth_app = Starlette(
+    routes=[
+        Route("/.well-known/oauth-authorization-server", _as_metadata),
+        Route("/.well-known/oauth-authorization-server/{path:path}", _as_metadata),
+        Route("/.well-known/oauth-protected-resource", _pr_metadata),
+        Route("/.well-known/oauth-protected-resource/{path:path}", _pr_metadata),
+        Route("/oauth/register", _register, methods=["POST"]),
+        Route("/oauth/authorize", _authorize, methods=["GET", "POST"]),
+        Route("/oauth/token", _token, methods=["POST"]),
+    ]
+)

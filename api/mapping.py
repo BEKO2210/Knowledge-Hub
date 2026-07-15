@@ -16,7 +16,7 @@ from starlette.responses import JSONResponse
 
 import config
 import vault
-from api.common import DATA_DIR, GRAPHIFY_BIN, KNOWLEDGE_ROOT
+from api.common import DATA_DIR, GRAPHIFY_BIN, KNOWLEDGE_ROOT, json_object
 from api.i18n import T
 
 # ---------------------------------------------------------------------------
@@ -255,7 +255,7 @@ async def mapping_history(request: Request) -> JSONResponse:
 
 async def mapping_dismiss(request: Request) -> JSONResponse:
     """Einen Lauf als erledigt abhaken (oder das Häkchen wieder entfernen)."""
-    body = await request.json()
+    body = await json_object(request)
     start = str(body.get("start", "")).strip()
     if not start:
         return JSONResponse({"error": T("Kein Lauf angegeben.")}, status_code=400)
@@ -312,7 +312,7 @@ async def mapping_status(request: Request) -> JSONResponse:
 
 
 async def mapping_toggle(request: Request) -> JSONResponse:
-    body = await request.json()
+    body = await json_object(request)
     on = bool(body.get("enabled"))
     code, out = _sysctl("enable" if on else "disable", "--now", "nightly-map.timer")
     vault.audit("MAPPING-ON" if on else "MAPPING-OFF", "nightly-map.timer", client="web-ui")
@@ -322,7 +322,7 @@ async def mapping_toggle(request: Request) -> JSONResponse:
 
 
 async def mapping_config(request: Request) -> JSONResponse:
-    body = await request.json()
+    body = await json_object(request)
     cfg = config.load()
     t = str(body.get("time", "")).strip()
     backend = str(body.get("backend", "")).strip()
@@ -415,7 +415,7 @@ async def mapping_projects(request: Request) -> JSONResponse:
 
 
 async def mapping_project_add(request: Request) -> JSONResponse:
-    body = await request.json()
+    body = await json_object(request)
     p = _safe_dir(str(body.get("path", "")))
     if p is None:
         return JSONResponse(
@@ -488,7 +488,7 @@ def _purge_graph_data(project_dir: Path) -> list[str]:
 
 async def mapping_project_update(request: Request) -> JSONResponse:
     """Toggle enabled oder Projekt entfernen (entfernen = Graph-Daten komplett löschen)."""
-    body = await request.json()
+    body = await json_object(request)
     target = str(body.get("path", ""))
     action = str(body.get("action", ""))
     entries = config.project_entries()
@@ -663,7 +663,7 @@ def _repair_worker(name: str, p: Path, cfg: dict) -> None:
 
 
 async def project_repair(request: Request) -> JSONResponse:
-    body = await request.json()
+    body = await json_object(request)
     target = str(body.get("path", ""))
     p = Path(target).expanduser()
     if str(p) not in _project_paths():
@@ -714,7 +714,7 @@ async def ignore_get(request: Request) -> JSONResponse:
 
 
 async def ignore_put(request: Request) -> JSONResponse:
-    body = await request.json()
+    body = await json_object(request)
     p = _project_paths().get(str(Path(str(body.get("path", ""))).expanduser()))
     if p is None:
         return JSONResponse({"error": T("Projekt nicht gefunden")}, status_code=404)
