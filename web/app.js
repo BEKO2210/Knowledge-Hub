@@ -1020,19 +1020,23 @@ async function loadGraphStock() {
       : `<span class="chip">${t('archiviert')}</span>`;
     const zahlen = g.nodes != null ? t2('{n} Knoten', {n: g.nodes}) : t('ohne Zahlen');
     const herkunft = g._kind === 'archived' && g.origin ? `<div style="color:var(--mut2);font-size:.76rem;margin-top:6px;line-height:1.5">${escapeHtml(g.origin)}</div>` : '';
-    /* Aktionen als EIGENE Zeile: mit margin-left:auto in der Kopfzeile wurden die Knöpfe
-       auf schmalen Screens zusammengequetscht und der Text lief über den Rahmen hinaus. */
+    /* Entfernen = reiner Icon-Knopf (Papierkorb, feste 44px) rechts in der Kopfzeile —
+       Text-Knöpfe liefen auf schmalen Screens über den Rahmen. Weitere Aktionen
+       (nur bei ungeklärten Graphen) stehen als eigene Zeile darunter. */
     row.innerHTML = `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;min-width:0">
       <span style="font-weight:600">${escapeHtml(g.name)}</span>${badge}
-      <span style="color:var(--mut);font-size:.82rem">${zahlen}</span></div>${herkunft}
-      <div class="acts" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px"></div>`;
+      <span style="color:var(--mut);font-size:.82rem">${zahlen}</span>
+      <button class="btn ghost icon delbtn" style="margin-left:auto;flex:none;color:var(--red)"
+        aria-label="${t('Entfernen')}" title="${t('Entfernen')}">
+        <svg class="ic" viewBox="0 0 24 24"><use href="#i-trash"/></svg></button></div>${herkunft}
+      <div class="acts" style="display:none;gap:8px;flex-wrap:wrap;margin-top:10px"></div>`;
     const acts = row.querySelector('.acts');
-    const mk = (label, fn, danger) => {
+    const mk = (label, fn) => {
+      acts.style.display = 'flex';
       const b = document.createElement('button');
       b.className = 'btn ghost sm';
       b.style.whiteSpace = 'nowrap';
       b.style.flex = 'none';
-      if (danger) b.style.color = 'var(--red)';
       b.textContent = label; b.onclick = fn; acts.appendChild(b);
     };
     if (g._kind === 'unregistered') {
@@ -1048,13 +1052,13 @@ async function loadGraphStock() {
         toast(t('Oben „Hinzufügen“ nutzen und den QUELLordner des Projekts wählen — der Graph gehört dann dazu.'));
       });
     }
-    mk(t('Entfernen'), async () => {
+    row.querySelector('.delbtn').onclick = async () => {
       if (!confirm(t2('Graph „{n}“ vollständig entfernen? Hub-Kopie, Index und gespeicherte Antworten werden gelöscht. Der Quellordner bleibt unberührt.', {n: g.name}))) return;
       const r = await api('/ui/api/mapping/graphs', {method: 'POST', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({name: g.name, action: 'remove'})});
       toast(r.ok ? t('Entfernt') : t('Fehlgeschlagen'), r.ok);
       loadGraphStock();
-    }, true);
+    };
     box.appendChild(row);
   }
 }
