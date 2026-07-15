@@ -2020,6 +2020,12 @@ async function setup2fa() {
 }
 async function enable2fa(e) {
   e.preventDefault();
+  // Doppelklick-Schutz wie bei allen anderen Schreibaktionen: Ein zweites Absenden
+  // würde serverseitig zwar abgewiesen (409), aber der Knopf soll gar nicht erst
+  // ein zweites Mal feuern. Der disabled Submit-Button unterbindet auch Enter-Doppel.
+  const btn = e.submitter || (e.target.querySelector && e.target.querySelector('button'));
+  if (btn) btn.disabled = true;
+  try {
   const r = await api('/ui/api/2fa/enable', {method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({code: $('verify2fa').value.trim()})});
   const j = await r.json();
@@ -2044,6 +2050,7 @@ async function enable2fa(e) {
   window.__recovery = j.recovery;
   $('reccodes').textContent = j.recovery.join('\n');
   toast(t('Zwei-Faktor-Authentifizierung aktiviert'));
+  } finally { if (btn) btn.disabled = false; }
 }
 function copyRecovery() {
   navigator.clipboard.writeText((window.__recovery || []).join('\n'))
@@ -2051,12 +2058,16 @@ function copyRecovery() {
 }
 async function disable2fa(e) {
   e.preventDefault();
-  if (!await askConfirm(t('Zwei-Faktor-Schutz wirklich abschalten? Danach genügt wieder das Passwort allein.'))) return;
-  const r = await api('/ui/api/2fa/disable', {method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({code: $('off2fa').value.trim()})});
-  const j = await r.json();
-  toast(r.ok ? t('2FA ausgeschaltet') : (j.error || t('Fehlgeschlagen')), r.ok);
-  loadTwoFA();
+  const btn = e.submitter || (e.target.querySelector && e.target.querySelector('button'));
+  if (btn) btn.disabled = true;
+  try {
+    if (!await askConfirm(t('Zwei-Faktor-Schutz wirklich abschalten? Danach genügt wieder das Passwort allein.'))) return;
+    const r = await api('/ui/api/2fa/disable', {method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({code: $('off2fa').value.trim()})});
+    const j = await r.json();
+    toast(r.ok ? t('2FA ausgeschaltet') : (j.error || t('Fehlgeschlagen')), r.ok);
+    loadTwoFA();
+  } finally { if (btn) btn.disabled = false; }
 }
 
 /* --- Vault-Sicherheit --- */

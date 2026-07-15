@@ -40,7 +40,7 @@ def _code_at(secret_b32: str, counter: int) -> str:
     key = base64.b32decode(secret_b32 + "=" * (-len(secret_b32) % 8))
     mac = hmac.new(key, struct.pack(">Q", counter), hashlib.sha1).digest()
     offset = mac[-1] & 0x0F
-    val = struct.unpack(">I", mac[offset:offset + 4])[0] & 0x7FFFFFFF
+    val = struct.unpack(">I", mac[offset : offset + 4])[0] & 0x7FFFFFFF
     return str(val % (10**DIGITS)).zfill(DIGITS)
 
 
@@ -58,8 +58,9 @@ def verify_code(secret_b32: str, code: str) -> bool:
 
 def provisioning_uri(secret_b32: str, account: str, issuer: str) -> str:
     label = quote(f"{issuer}:{account}")
-    return (f"otpauth://totp/{label}?secret={secret_b32}"
-            f"&issuer={quote(issuer)}&digits={DIGITS}&period={PERIOD}")
+    return (
+        f"otpauth://totp/{label}?secret={secret_b32}&issuer={quote(issuer)}&digits={DIGITS}&period={PERIOD}"
+    )
 
 
 def qr_svg(uri: str) -> str:
@@ -73,7 +74,7 @@ def qr_svg(uri: str) -> str:
     qr.save(buf, kind="svg", scale=5, border=2, dark="#0f172a", light="#ffffff")
     svg = buf.getvalue().decode()
     # Nur das <svg>…</svg> zurück (ohne XML-Prolog), damit es sich einbetten lässt.
-    return svg[svg.index("<svg"):]
+    return svg[svg.index("<svg") :]
 
 
 # ---------------------------------------------------------------------------
@@ -127,8 +128,15 @@ def _gen_recovery(n: int = 8) -> list[str]:
 
 def enable(code: str) -> list[str] | None:
     """Mit einem gültigen Code aktivieren. Gibt die Wiederherstellungscodes
-    zurück (einmalig sichtbar) oder None bei falschem Code."""
+    zurück (einmalig sichtbar) oder None bei falschem Code / bereits aktivem 2FA.
+
+    Bereits aktiv ⇒ NICHT neu erzeugen: Ein zweiter Aufruf mit demselben, noch
+    gültigen Code (Doppelklick, Enter+Klick, zweites Gerät) würde sonst frische
+    Recovery-Codes anlegen und die gerade angezeigten still entwerten (R17-1).
+    """
     st = _load()
+    if st.get("enabled"):
+        return None
     secret = st.get("secret")
     if not secret or not verify_code(secret, code):
         return None

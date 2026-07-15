@@ -118,6 +118,11 @@ async def twofa_enable(request: Request) -> JSONResponse:
     import totp
 
     body = await json_object(request)
+    # Schon aktiv? Dann nicht noch einmal aktivieren — ein zweites Absenden
+    # (Doppelklick, zweites Gerät) würde sonst die gezeigten Recovery-Codes
+    # entwerten. Klare Meldung statt des irreführenden „Code stimmt nicht" (R17-1).
+    if await asyncio.to_thread(totp.is_enabled):
+        return JSONResponse({"error": T("Zwei-Faktor ist bereits aktiv.")}, status_code=409)
     codes = await asyncio.to_thread(totp.enable, str(body.get("code", "")))
     if codes is None:
         return JSONResponse(
