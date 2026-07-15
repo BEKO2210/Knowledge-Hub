@@ -17,9 +17,13 @@ CLI-Helfer für Shell-Skripte:
 from __future__ import annotations
 
 import copy
+import fcntl
 import os
 import sys
 import tempfile
+import time
+from collections.abc import Callable
+from contextlib import contextmanager
 from pathlib import Path
 
 import yaml
@@ -122,22 +126,73 @@ def _schreibe_atomar(ziel: Path, text: str) -> None:
         raise
 
 
+@contextmanager
+def _config_lock(target: Path, timeout: float = 10.0):
+    """Exklusive Sperre auf eine Lock-Datei NEBEN der config.yaml.
+
+    Warum überhaupt: save_projects, save_mapping und save_backup schreiben je die
+    GANZE Datei über ein Lesen-Ändern-Schreiben. MCP-Tools laufen im Worker-Thread,
+    HTTP-Handler in der Event-Loop — echte Parallelität. Ohne diese Sperre las der
+    spätere Schreiber den Stand VOR der Änderung des früheren und schrieb ihn wieder
+    weg: eine der beiden Änderungen ging unbemerkt verloren (R19-1). flock gehört dem
+    Datei-Deskriptor und stirbt mit dem Prozess; die Lock-Datei liegt neben der Config,
+    also isoliert pro Instanz (auch im Test).
+    """
+    target.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = target.with_name(target.name + ".lock")
+    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    frist = time.monotonic() + timeout
+    try:
+        while True:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= frist:
+                    raise TimeoutError(f"config.yaml ist gesperrt — {lock_path.name}") from None
+                time.sleep(0.02)
+        yield
+    finally:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
+
+
+def _update_yaml(mutate: Callable[[dict], None], cfg_path: Path | None = None) -> None:
+    """Read-modify-write auf config.yaml unter Sperre + atomarem Schreibvorgang.
+
+    Jeder Schreiber liest unter der Sperre FRISCH ein und schreibt atomar zurück —
+    damit können sich parallele Schreiber verschiedener Abschnitte nicht mehr
+    gegenseitig überschreiben (Lost-Update-Schutz, R19-1) und es entsteht nie eine
+    halbe Datei (temp+rename, R19-2).
+    """
+    target = cfg_path or CONFIG_PATH
+    with _config_lock(target):
+        data = {}
+        if target.exists():
+            data = yaml.safe_load(target.read_text()) or {}
+        mutate(data)
+        _schreibe_atomar(target, _HEADER + yaml.safe_dump(data, allow_unicode=True, sort_keys=False))
+
+
 def save_projects(project_entries: list[dict]) -> None:
     """Persistiert mapping.projects in config.yaml (Rest der Datei bleibt erhalten)."""
-    data = {}
-    if CONFIG_PATH.exists():
-        data = yaml.safe_load(CONFIG_PATH.read_text()) or {}
-    data.setdefault("mapping", {})["projects"] = project_entries
-    _schreibe_atomar(CONFIG_PATH, _HEADER + yaml.safe_dump(data, allow_unicode=True, sort_keys=False))
+
+    def mutate(data: dict) -> None:
+        data.setdefault("mapping", {})["projects"] = project_entries
+
+    _update_yaml(mutate)
 
 
 def save_backup(targets: list[dict], cfg_path: Path | None = None) -> None:
     """Backup-Ziele persistieren (Rest der config.yaml bleibt unangetastet)."""
-    path = cfg_path or CONFIG_PATH
-    data = (yaml.safe_load(path.read_text()) if path.exists() else {}) or {}
-    data.setdefault("backup", {})["enabled"] = True
-    data["backup"]["targets"] = targets
-    path.write_text(_HEADER + yaml.safe_dump(data, allow_unicode=True, sort_keys=False))
+
+    def mutate(data: dict) -> None:
+        data.setdefault("backup", {})["enabled"] = True
+        data["backup"]["targets"] = targets
+
+    _update_yaml(mutate, cfg_path)
 
 
 def project_entries(cfg: dict | None = None) -> list[dict]:
@@ -167,12 +222,11 @@ def active_backend(cfg: dict | None = None) -> tuple[str, dict]:
 
 
 def save_mapping(backend: str, model: str, cfg_path: Path | None = None) -> None:
-    path = cfg_path or CONFIG_PATH
-    data = yaml.safe_load(path.read_text()) if path.exists() else {}
-    data = data or {}
-    data.setdefault("mapping", {})["backend"] = backend
-    data["mapping"]["model"] = model
-    path.write_text(_HEADER + yaml.safe_dump(data, allow_unicode=True, sort_keys=False))
+    def mutate(data: dict) -> None:
+        data.setdefault("mapping", {})["backend"] = backend
+        data["mapping"]["model"] = model
+
+    _update_yaml(mutate, cfg_path)
 
 
 def get(dotted: str, cfg: dict | None = None):
