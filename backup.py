@@ -28,6 +28,7 @@ import io
 import os
 import sys
 import tarfile
+import tempfile
 import time
 from pathlib import Path
 
@@ -90,15 +91,14 @@ def open_archive(blob: bytes, passphrase: str) -> bytes:
     if not blob.startswith(MAGIC):
         raise ValueError("Keine Knowledge-Hub-Sicherung (falsche Datei?).")
     off = len(MAGIC)
-    salt = blob[off:off + SALT_LEN]
-    nonce = blob[off + SALT_LEN:off + SALT_LEN + NONCE_LEN]
-    ct = blob[off + SALT_LEN + NONCE_LEN:]
+    salt = blob[off : off + SALT_LEN]
+    nonce = blob[off + SALT_LEN : off + SALT_LEN + NONCE_LEN]
+    ct = blob[off + SALT_LEN + NONCE_LEN :]
     key = _derive(passphrase, salt)
     try:
         return AESGCM(key).decrypt(nonce, ct, AAD)
     except Exception as e:  # InvalidTag
-        raise ValueError("Entschlüsselung fehlgeschlagen — falsche Passphrase "
-                         "oder beschädigte Datei.") from e
+        raise ValueError("Entschlüsselung fehlgeschlagen — falsche Passphrase oder beschädigte Datei.") from e
 
 
 def contents(blob: bytes, passphrase: str) -> list[str]:
@@ -124,6 +124,33 @@ def restore(blob: bytes, passphrase: str, dest: Path) -> list[str]:
     return written
 
 
+def _write_atomar(path: Path, blob: bytes) -> None:
+    """Blob atomar an `path` schreiben: temp im selben Ordner, fsync, dann os.replace.
+
+    Warum: `path.write_bytes(blob)` schreibt an Ort und Stelle. Läuft dabei das Medium
+    voll (ENOSPC), bleibt eine **halbe .khub** zurück — und da die neueste Datei als
+    „das Backup" gilt, greift ein Restore genau das Kaputte. Über temp+rename wird die
+    Zieldatei erst mit dem atomaren `os.replace` sichtbar; ein abgebrochener Write trifft
+    nur die Zwischendatei (wird entfernt) und lässt eine bereits vorhandene gute Datei
+    unangetastet.
+    """
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".khub-", suffix=".tmp")
+    try:
+        mv = memoryview(blob)
+        while mv:
+            mv = mv[os.write(fd, mv) :]
+        os.fsync(fd)
+        os.close(fd)
+        fd = -1
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    except BaseException:
+        if fd != -1:
+            os.close(fd)
+        Path(tmp).unlink(missing_ok=True)
+        raise
+
+
 def _prune(files: list[Path], keep: int) -> list[str]:
     """Alte Sicherungen entfernen — die letzten `keep` bleiben."""
     removed = []
@@ -138,8 +165,7 @@ def _target_local(blob: bytes, name: str, t: dict) -> str:
     d.mkdir(parents=True, exist_ok=True)
     d.chmod(0o700)
     out = d / name
-    out.write_bytes(blob)
-    out.chmod(0o600)
+    _write_atomar(out, blob)
     _prune(list(d.glob("hub-*.khub")), int(t.get("keep", 14)))
     return f"lokal: {out}"
 
@@ -173,22 +199,31 @@ def _target_git(blob: bytes, name: str, t: dict, token: str = "") -> str:
         if not (repo / ".git").is_dir():
             cl = subprocess.run(  # noqa: S603,S607
                 ["git", "clone", "--depth", "1", _tokenized(url, token), str(repo)],
-                capture_output=True, text=True, timeout=300,
+                capture_output=True,
+                text=True,
+                timeout=300,
             )
             if cl.returncode != 0:
                 err = (cl.stderr or "").replace(token, "***") if token else (cl.stderr or "")
                 raise RuntimeError(f"clone fehlgeschlagen: {err.strip()[:140]}")
             # Token sofort aus der Repo-Konfiguration entfernen
-            subprocess.run(["git", "-C", str(repo), "remote", "set-url", "origin", url],  # noqa: S603,S607
-                           capture_output=True, timeout=30)
+            subprocess.run(
+                ["git", "-C", str(repo), "remote", "set-url", "origin", url],  # noqa: S603,S607
+                capture_output=True,
+                timeout=30,
+            )
     else:
         repo = Path(str(t["repo"])).expanduser()
         if not (repo / ".git").is_dir():
             raise FileNotFoundError(f"{repo} ist kein Git-Repository")
 
     def git(*args: str) -> subprocess.CompletedProcess:
-        return subprocess.run(["git", "-C", str(repo), *args],  # noqa: S603,S607
-                              capture_output=True, text=True, timeout=300)
+        return subprocess.run(
+            ["git", "-C", str(repo), *args],  # noqa: S603,S607
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
 
     if url:
         git("fetch", "--depth", "1", _tokenized(url, token), branch)
@@ -197,21 +232,28 @@ def _target_git(blob: bytes, name: str, t: dict, token: str = "") -> str:
     sub = repo / str(t.get("subdir", "hub-backups"))
     sub.mkdir(parents=True, exist_ok=True)
     out = sub / name
-    out.write_bytes(blob)
-    out.chmod(0o600)
+    _write_atomar(out, blob)
     _prune(list(sub.glob("hub-*.khub")), int(t.get("keep", 14)))
 
     git("add", "-A", str(sub.relative_to(repo)))
     if git("diff", "--cached", "--quiet").returncode == 0:
         return f"git: keine Änderung ({repo.name})"
-    git("-c", "user.email=hub@localhost", "-c", "user.name=Knowledge Hub",
-        "commit", "-q", "-m", f"hub-backup: {name}")
+    git(
+        "-c",
+        "user.email=hub@localhost",
+        "-c",
+        "user.name=Knowledge Hub",
+        "commit",
+        "-q",
+        "-m",
+        f"hub-backup: {name}",
+    )
 
     push = git("push", "-q", _tokenized(url, token) if url else "origin", f"HEAD:{branch}")
     if push.returncode != 0:
-        err = (push.stderr or "")
+        err = push.stderr or ""
         if token:
-            err = err.replace(token, "***")     # Token niemals ins Log
+            err = err.replace(token, "***")  # Token niemals ins Log
         raise RuntimeError(f"push fehlgeschlagen: {err.strip()[:140]}")
     where = url.split("/")[-1].removesuffix(".git") if url else repo.name
     return f"git: {where}/{t.get('subdir', 'hub-backups')} gepusht"
@@ -242,8 +284,7 @@ def run(cfg: dict, passphrase: str) -> dict:
                     token = _vault.secret_get(str(secret), client="backup") or ""
                     if not token:
                         raise RuntimeError(f"Kein Token im Vault unter „{secret}“.")
-                results.append({"target": "git", "ok": True,
-                                "detail": _target_git(blob, name, t, token)})
+                results.append({"target": "git", "ok": True, "detail": _target_git(blob, name, t, token)})
             else:
                 results.append({"target": str(kind), "ok": False, "detail": "Unbekannter Zieltyp"})
                 ok = False
@@ -288,8 +329,7 @@ def main() -> int:
         elif args.cmd == "create":
             blob = create(_passphrase())
             out = Path(args.out)
-            out.write_bytes(blob)
-            out.chmod(0o600)
+            _write_atomar(out, blob)
             print(f"✓ Gesichert: {out} ({len(blob):,} Bytes)")
         elif args.cmd == "verify":
             names = contents(Path(args.file).read_bytes(), _passphrase())
@@ -307,7 +347,9 @@ def main() -> int:
             print(f"  cp {dest}/config.yaml ~/.config/knowledge-mcp/config.yaml")
             print(f"  cp {dest}/vault.enc   ~/knowledge-mcp/vault.enc")
             print("  systemctl --user restart knowledge-mcp")
-    except (ValueError, FileNotFoundError) as e:
+    except (ValueError, FileNotFoundError, OSError) as e:
+        # OSError deckt das volle Medium (ENOSPC), fehlende Rechte, kaputte Pfade ab —
+        # der Aufrufer soll eine klare Zeile sehen, keinen Traceback.
         print(f"✗ {e}", file=sys.stderr)
         return 1
     return 0
