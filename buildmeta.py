@@ -160,6 +160,17 @@ def validate_graph(project_dir: Path) -> list[str]:
         for ende in (e.get("source"), e.get("target")):
             if ende not in ids:
                 probleme.append(f"Kante referenziert fehlenden Knoten: {ende!r}")
+    # Community-Namen gehören zur richtigen ID: dieselbe community-ID darf nicht
+    # mehrere verschiedene community_name tragen (Kap. 7).
+    namen_je_community: dict = {}
+    for n in nodes:
+        cid = n.get("community")
+        nm = n.get("community_name")
+        if cid is not None and nm:
+            namen_je_community.setdefault(cid, set()).add(str(nm))
+    for cid, namen in namen_je_community.items():
+        if len(namen) > 1:
+            probleme.append(f"Community {cid!r} hat widersprüchliche Namen: {sorted(namen)}")
     return probleme
 
 

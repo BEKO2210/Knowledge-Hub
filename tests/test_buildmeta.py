@@ -124,6 +124,21 @@ def test_validate_erkennt_doppelte_ids(projekt):
     assert any("doppelt" in p.lower() for p in probleme), probleme
 
 
+def test_validate_erkennt_widerspruechliche_community_namen(projekt):
+    # Invariante (GESAMTAUFTRAG Kap. 7): Community-Namen gehören zur richtigen ID —
+    # dieselbe community-ID darf nicht zwei verschiedene Namen tragen.
+    out = projekt / "graphify-out"
+    g = json.loads((out / "graph.json").read_text())
+    g["nodes"] = [
+        {"id": "a", "community": 1, "community_name": "Kern"},
+        {"id": "b", "community": 1, "community_name": "Anders"},  # Widerspruch
+    ]
+    g["links"] = []
+    (out / "graph.json").write_text(json.dumps(g))
+    probleme = buildmeta.validate_graph(projekt)
+    assert any("Namen" in p or "community" in p.lower() for p in probleme), probleme
+
+
 def test_snapshot_und_restore_stellen_generation_wieder_her(projekt):
     buildmeta.write_manifest(projekt)
     out = projekt / "graphify-out"
