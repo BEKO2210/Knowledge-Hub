@@ -16,15 +16,15 @@ encrypted vault. Claude — or any MCP client — gets both, and nobody else get
 [![Zero downtime](https://img.shields.io/badge/deploys-blue--green%2C%20zero%20downtime-1baf7a)](#architecture)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](LICENSE)
 
+[Website](https://hub.it-handwerk-stuttgart.de) ·
+[Live benchmarks](https://hub.it-handwerk-stuttgart.de/benchmarks.html) ·
+[Quick start](#quick-start) ·
+[Architecture](#architecture) ·
+[Wiki](https://github.com/BEKO2210/Knowledge-Hub/wiki)
+
 <img src="docs/images/graph-dark.png" alt="The graph view: a project's knowledge graph with clusters, a selected node and its neighbours" width="100%" />
 
-**[Website](https://hub.it-handwerk-stuttgart.de)** ·
-**[Live benchmarks](https://hub.it-handwerk-stuttgart.de/benchmarks.html)** ·
-**[Wiki](https://github.com/BEKO2210/Knowledge-Hub/wiki)**
-
 </div>
-
----
 
 ## Why this exists
 
@@ -41,48 +41,11 @@ forever. Knowledge Hub keeps keys in an encrypted vault and gives the assistant 
 
 It runs on **your** machine. No third party ever sees your code or your keys.
 
----
+## Quick start
 
-## What you get
-
-|  |  |
-|---|---|
-| 🕸️ **A graph per project** | Code, Compose files, configs, docs and notes become nodes with hard facts — ports, paths, hosts, decisions. Interactive viewer with clusters, hub nodes and shortest paths. |
-| 🎯 **Hybrid retrieval** | `graph_query` embeds your question with a local multilingual model (CPU, offline) and answers with graph structure *plus* the most relevant raw file excerpts. Benchmarked at **85 % hit rate** where lexical graph lookup scored 58 % — measured, not claimed ([benchmarks](#benchmarks)). |
-| 🔐 **Encrypted vault** | AES-256-GCM with a double-wrapped master key: survives unattended reboots, stays useless on disk, never re-encrypts on password change. Every access audited. |
-| 🤖 **A real MCP server** | Streamable HTTP, OAuth 2.1 + PKCE with dynamic client registration. Connect Claude with one URL — the hub even hands its own logo to the client during the handshake (`Implementation.icons`). |
-| 🌙 **Nightly mapping — accountable** | A timer re-maps every project while you sleep, incrementally. Every run writes a **machine-readable run record** (per project: nodes, edges, communities, delta, build ID, status) — partial failures stay visible per project instead of silently vanishing. |
-| 🗂️ **Graph inventory** | Every visible graph belongs to exactly one registered project — active or *archived with documented origin*. Orphans are flagged for a decision (register / archive / remove), never silently listed. Removal cascades through graph, report, viewer, indexes and saved answers; source folders are never touched. |
-| 🔁 **Zero-downtime deploys** | Blue-green slots behind a systemd socket: health-gated switches, a watch window, automatic fallback and a warm previous release. Updates land in under a second of cutover. |
-| 📱 **Works on a phone** | Installable PWA, bottom navigation, light and dark — the whole hub in your pocket. |
-| 🛡️ **Built to be attacked** | Rate-limited login that survives restarts, optional TOTP, hashed tokens, strict `default-src 'self'` CSP, acknowledgeable error diagnostics, encrypted off-site backups. |
-
----
-
-## Screenshots
-
-<table>
-<tr>
-<td width="50%"><img src="docs/images/graph-light.png" alt="Graph view in light mode" /><br /><sub><b>Explore</b> — clusters, hub nodes, neighbours, shortest paths.</sub></td>
-<td width="50%"><img src="docs/images/secrets-dark.png" alt="The secrets vault" /><br /><sub><b>Vault</b> — a value is never rendered until you ask for it.</sub></td>
-</tr>
-<tr>
-<td><img src="docs/images/mapping-dark.png" alt="Nightly mapping with run history" /><br /><sub><b>Mapping</b> — every run with cost, duration, per-project results and status.</sub></td>
-<td><img src="docs/images/health-dark.png" alt="Diagnostics" /><br /><sub><b>Diagnostics</b> — every check says what to do if it isn't green.</sub></td>
-</tr>
-<tr>
-<td><img src="docs/images/connect-dark.png" alt="Connecting an AI client" /><br /><sub><b>Connect</b> — pair a device by QR code, then test the connection for real.</sub></td>
-<td align="center"><img src="docs/images/mobile-graph.png" alt="The mobile interface" width="230" /><br /><sub><b>Phone</b> — installable, swipeable, yours.</sub></td>
-</tr>
-</table>
-
----
-
-## Install
-
-**Requirements:** Linux, Python 3.12+, and [graphifyy](https://pypi.org/project/graphifyy/) to build
-the graphs — a third-party graph engine ([MIT, by Safi Shamsi](https://github.com/safishamsi/graphify)).
-Knowledge Hub is the server, vault, scheduler, retrieval engine and UI *around* it.
+> **Requirements:** Linux, Python 3.12+, and [graphifyy](https://pypi.org/project/graphifyy/) —
+> a third-party graph engine ([MIT, by Safi Shamsi](https://github.com/safishamsi/graphify)).
+> Knowledge Hub is the server, vault, scheduler, retrieval engine and UI *around* it.
 
 ```bash
 git clone https://github.com/BEKO2210/Knowledge-Hub.git
@@ -91,8 +54,8 @@ cd Knowledge-Hub
 ```
 
 The installer creates a virtualenv, generates your keys, installs a systemd user service plus the
-nightly timer, and opens a **setup wizard** in your browser. It asks for a password, which projects
-to map, and which AI provider to use for the semantic pass. On its first query the hybrid engine
+nightly timer, and opens a **setup wizard** in your browser: choose a password, pick the projects
+to map, pick an AI provider for the semantic pass — done. On its first query the hybrid engine
 downloads a local embedding model once (~470 MB); after that, retrieval is fully offline.
 
 <details>
@@ -115,11 +78,42 @@ client, put it behind a tunnel that terminates TLS — a
 works well and opens no ports. Set `server.public_url` to the resulting HTTPS address; the hub
 turns on HSTS automatically once it sees `https://`.
 
-**Never expose it over plain HTTP.** The bearer token is the only thing between the internet and
-your vault.
 </details>
 
----
+> [!WARNING]
+> **Never expose the hub over plain HTTP.** The bearer token is the only thing between the
+> internet and your vault. HTTPS via tunnel or reverse proxy is non-negotiable.
+
+## What you get
+
+|  |  |
+|---|---|
+| 🕸️ **A graph per project** | Code, Compose files, configs, docs and notes become nodes with hard facts — ports, paths, hosts, decisions. Interactive viewer with clusters, hub nodes and shortest paths. |
+| 🎯 **Hybrid retrieval** | `graph_query` embeds your question with a local multilingual model (CPU, offline) and answers with graph structure *plus* the most relevant raw file excerpts. Benchmarked at **85 % hit rate** where lexical graph lookup scored 58 % — measured, not claimed ([benchmarks](#benchmarks)). |
+| 🔐 **Encrypted vault** | AES-256-GCM with a double-wrapped master key: survives unattended reboots, stays useless on disk, never re-encrypts on password change. Every access audited. |
+| 🤖 **A real MCP server** | Streamable HTTP, OAuth 2.1 + PKCE with dynamic client registration. Connect Claude with one URL — the hub even hands its own logo to the client during the handshake. |
+| 🌙 **Accountable nightly mapping** | A timer re-maps every project while you sleep, incrementally. Every run writes a **machine-readable run record** — per project: nodes, edges, communities, delta, build ID, status. Partial failures stay visible instead of silently vanishing. |
+| 🗂️ **Graph inventory** | Every visible graph belongs to exactly one registered project — active or *archived with documented origin*. Orphans are flagged for a decision, never silently listed. Removal cascades through every artifact; source folders are never touched. |
+| 🔁 **Zero-downtime deploys** | Blue-green slots behind a systemd socket: health-gated switches, a watch window, automatic fallback, and a warm previous release. |
+| 📱 **Works on a phone** | Installable PWA, bottom navigation, light and dark — the whole hub in your pocket. |
+| 🛡️ **Built to be attacked** | Rate-limited login that survives restarts, optional TOTP, hashed tokens, strict `default-src 'self'` CSP, acknowledgeable error diagnostics, encrypted off-site backups. |
+
+## Screenshots
+
+<table>
+<tr>
+<td width="50%"><img src="docs/images/graph-light.png" alt="Graph view in light mode" /><br /><sub><b>Explore</b> — clusters, hub nodes, neighbours, shortest paths.</sub></td>
+<td width="50%"><img src="docs/images/secrets-dark.png" alt="The secrets vault" /><br /><sub><b>Vault</b> — a value is never rendered until you ask for it.</sub></td>
+</tr>
+<tr>
+<td><img src="docs/images/mapping-dark.png" alt="Nightly mapping with run history" /><br /><sub><b>Mapping</b> — every run with cost, duration, per-project results and status.</sub></td>
+<td><img src="docs/images/health-dark.png" alt="Diagnostics" /><br /><sub><b>Diagnostics</b> — every check says what to do if it isn't green.</sub></td>
+</tr>
+<tr>
+<td><img src="docs/images/connect-dark.png" alt="Connecting an AI client" /><br /><sub><b>Connect</b> — pair a device by QR code, then test the connection for real.</sub></td>
+<td align="center"><img src="docs/images/mobile-graph.png" alt="The mobile interface" width="230" /><br /><sub><b>Phone</b> — installable, swipeable, yours.</sub></td>
+</tr>
+</table>
 
 ## Connect your AI assistant
 
@@ -135,7 +129,7 @@ token dies instantly.
 
 | Tool | What it does |
 |---|---|
-| `projects_list` | Every mapped project with node, edge and cluster counts — archived graphs are labelled with their documented origin, unregistered ones are flagged instead of blending in |
+| `projects_list` | Every mapped project with node, edge and cluster counts — archived graphs carry their documented origin, unregistered ones are flagged instead of blending in |
 | `graph_query` | Answers a question with hybrid retrieval: semantic graph traversal plus the most relevant file excerpts, in one context |
 | `graph_explain` | Explains one node in plain language |
 | `graph_path` | Shortest path between two concepts |
@@ -145,31 +139,37 @@ token dies instantly.
 | `project_create` | Creates a fresh notes project and registers it for nightly mapping |
 | `secret_list` · `secret_get` · `secret_set` · `secret_delete` | The vault — every access audited |
 
----
-
 ## Architecture
 
-```
-                      ┌──────────────────────────┐
-    Claude / any      │  OAuth 2.1 + PKCE        │
-    MCP client  ─────▶│  Bearer gate             │───┐
-                      └──────────────────────────┘   │
-                                                     ▼
-    Browser / PWA ──▶ /ui ─▶   ┌────────────────────────────────────┐
-                               │  api/  auth · knowledge · secrets  │
-                               │        mapping · system            │
-                               └────────────────────────────────────┘
-                                  │              │              │
-                     ┌────────────▼───┐  ┌───────▼──────┐  ┌────▼───────────┐
-                     │ semantic.py    │  │ vault.enc    │  │ nightly timer  │
-                     │ hybrid engine: │  │ AES-256-GCM  │  │ + runlog.py    │
-                     │ graph + chunks │  │ double-wrap  │  │ (machine-      │
-                     └────────────────┘  └──────────────┘  │  readable runs)│
-                                                           └────────────────┘
+```mermaid
+flowchart TB
+    classDef client fill:#0e1526,stroke:#3987e5,color:#eef0fa
+    classDef core fill:#0e1526,stroke:#1baf7a,color:#eef0fa
+    classDef store fill:#141c30,stroke:#72829f,color:#eef0fa
 
-    Production serving (how this instance runs itself):
-    entry socket :8300 ──▶ active slot (blue │ green) — health-gated switch,
-    watch window, automatic fallback, previous release kept warm.
+    Claude["🤖 Claude · any MCP client"]:::client
+    Browser["🌐 Browser · installable PWA"]:::client
+
+    Claude -- "OAuth 2.1 + PKCE<br/>streamable HTTP" --> Gate["Bearer gate · /mcp"]:::core
+    Browser --> UI["Web UI · /ui"]:::core
+    Gate --> API["api/<br/>auth · knowledge · secrets · mapping · system"]:::core
+    UI --> API
+
+    API --> SEM["semantic.py<br/>hybrid retrieval engine<br/>graph traversal + file chunks"]:::store
+    API --> VAULT["vault.enc<br/>AES-256-GCM<br/>double-wrapped master key"]:::store
+    API --> NIGHT["nightly timer + runlog.py<br/>machine-readable run records"]:::store
+```
+
+**How this instance serves itself — zero-downtime blue-green:**
+
+```mermaid
+flowchart LR
+    classDef live fill:#0e1526,stroke:#1baf7a,color:#eef0fa
+    classDef warm fill:#141c30,stroke:#72829f,color:#aab1cc
+
+    Entry["entry socket<br/>:8300"]:::live --> Active["active slot<br/>(blue or green)"]:::live
+    Warm["previous release<br/>kept warm"]:::warm
+    Active <-. "health-gated switch · watch window<br/>automatic fallback · release blocklist" .-> Warm
 ```
 
 **Retrieval, specifically.** `semantic.py` is the hub's own engine: a local multilingual embedding
@@ -190,8 +190,6 @@ the previous run, the build ID of the accepted generation, and the error if one 
 in the UI reads these records; free-text log parsing exists only as a fallback for old logs.
 A failed project never erases the results of the others.
 
----
-
 ## Benchmarks
 
 Retrieval quality is measured, not claimed: gold questions with objectively known answers, scored
@@ -208,16 +206,15 @@ Latest run — **41 gold questions across 11 projects** (2026-07-15), same quest
 Why hybrid wins twice: graph structure is cheap per token (wins tight budgets), raw file excerpts
 carry the literal facts (win large budgets). The hybrid splits every budget between both.
 
-The three public-library projects used in the hardest benchmark set (`requests`, `flask`,
-`express`) are kept in the hub as **archived graphs with documented origin** — so the published
-numbers stay reproducible against the exact graphs that produced them.
+> [!NOTE]
+> The three public-library projects used in the hardest benchmark set (`requests`, `flask`,
+> `express`) are kept in the hub as **archived graphs with documented origin** — so the published
+> numbers stay reproducible against the exact graphs that produced them.
 
 Full report with per-project results, methodology and the misses we publish alongside the hits:
 **[hub.it-handwerk-stuttgart.de/benchmarks.html](https://hub.it-handwerk-stuttgart.de/benchmarks.html)**
 — every figure on that page is loaded live from a schema-validated data file generated from the
 build artifacts of the exact release you're looking at.
-
----
 
 ## Security
 
@@ -231,10 +228,9 @@ build artifacts of the exact release you're looking at.
   (audited) instead of staring at stale warnings.
 - Encrypted off-site backups (local + git), verifiable with `python backup.py verify`.
 
-Found a vulnerability? See [SECURITY.md](SECURITY.md) — please
-[report it privately](https://github.com/BEKO2210/Knowledge-Hub/security/advisories/new).
-
----
+> [!IMPORTANT]
+> Found a vulnerability? See [SECURITY.md](SECURITY.md) — please
+> [report it privately](https://github.com/BEKO2210/Knowledge-Hub/security/advisories/new).
 
 ## Documentation
 
@@ -281,8 +277,6 @@ tests/       366 of them
 
 The interface is English by default and German at the flick of a switch.
 Code comments are in German.
-
----
 
 ## Licence
 
