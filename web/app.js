@@ -2559,3 +2559,8 @@ regler.addEventListener('input', () => {
   $('limlbl').textContent = (+regler.value >= +regler.max) ? t('Alle') : regler.value;
   limitChanged();
 });
+
+/* PWA: Service Worker registrieren (cached nur statische Assets — nie /ui/api oder /mcp) */
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/ui/sw.js').catch(() => {});
+}

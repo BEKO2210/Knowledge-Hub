@@ -18,7 +18,7 @@ from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, JSONResponse
+from starlette.responses import HTMLResponse, JSONResponse, Response
 from starlette.routing import Route
 
 import config
@@ -126,8 +126,10 @@ def asset_version() -> str:
     """Inhalts-Hash über CSS+JS. Hängt als ?v= an den Asset-URLs und sorgt dafür,
     dass ein Update sofort ankommt, obwohl die Dateien langlebig gecacht werden."""
     h = hashlib.sha256()
-    for n in ("app.css", "app.js"):
-        h.update((WEB_DIR / n).read_bytes())
+    for n in ("app.css", "app.js", "sw.js"):
+        p = WEB_DIR / n
+        if p.is_file():  # sw.js kam später dazu — Alt-Checkouts ohne die Datei bleiben lauffähig
+            h.update(p.read_bytes())
     return h.hexdigest()[:10]
 
 
@@ -193,20 +195,46 @@ async def root_icon(request: Request):
 
 
 async def manifest(request: Request) -> JSONResponse:
+    name = config.load()["branding"]["name"]
     return JSONResponse(
         {
-            "name": "Knowledge Hub",
-            "short_name": "Knowledge",
+            "id": "/ui",
+            "name": name,
+            "short_name": name.split()[0] if name else "Hub",
+            "description": "Self-hosted knowledge graphs, hybrid search and an encrypted secrets vault.",
             "start_url": "/ui",
+            "scope": "/ui",
             "display": "standalone",
             "background_color": "#0e1526",
             "theme_color": "#0e1526",
             "icons": [
                 {"src": "/ui/static/icon-192.png", "sizes": "192x192", "type": "image/png"},
                 {"src": "/ui/static/icon-512.png", "sizes": "512x512", "type": "image/png"},
+                {
+                    "src": "/ui/static/icon-512-maskable.png",
+                    "sizes": "512x512",
+                    "type": "image/png",
+                    "purpose": "maskable",
+                },
             ],
         },
         headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
+SW_JS = (WEB_DIR / "sw.js").read_text(encoding="utf-8") if (WEB_DIR / "sw.js").is_file() else ""
+
+
+async def service_worker(request: Request) -> Response:
+    """Service Worker unter /ui/sw.js — Scope /ui, Cache-Version = Asset-Version.
+
+    Sicherheitsregel: der Worker cached AUSSCHLIESSLICH statische Assets. /ui/api/*
+    und /mcp gehen immer ans Netz — Secrets und Live-Daten landen nie in einem Cache.
+    """
+    return Response(
+        SW_JS.replace("__V__", ASSET_V),
+        media_type="text/javascript",
+        headers={"Cache-Control": "no-cache"},
     )
 
 
@@ -394,6 +422,7 @@ ui_app = Starlette(
         Route("/ui/static/{name}", static_file),
         Route("/ui/asset/{name}", web_asset),
         Route("/ui/manifest.json", manifest),
+        Route("/ui/sw.js", service_worker),
         Route("/ui/api/login", auth.login, methods=["POST"]),
         Route("/ui/api/projects", knowledge.projects),
         Route("/ui/api/graph/{project}", knowledge.graph),

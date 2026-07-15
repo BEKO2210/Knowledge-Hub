@@ -666,7 +666,7 @@ class BearerGate:
             # /ui/asset/ = Stylesheet und Skript der Oberfläche — reiner Programmcode,
             # keine Daten. Muss offen sein, sonst lädt schon der Login-Bildschirm nicht.
             open_ui = (
-                path in ("/ui", "/ui/", "/ui/api/login", "/ui/manifest.json")
+                path in ("/ui", "/ui/", "/ui/api/login", "/ui/manifest.json", "/ui/sw.js")
                 or path.startswith("/ui/static/")
                 or path.startswith("/ui/asset/")
             )
