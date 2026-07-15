@@ -10,10 +10,33 @@ pip install -r requirements-dev.txt
 playwright install chromium
 
 ruff check .   # must be clean
-pytest         # all 99 must pass
+pytest         # the full suite must pass
 ```
 
 Both run in CI, so a red build is a red PR.
+
+## Licensing of contributions
+
+Knowledge Hub is licensed under the [AGPL-3.0](LICENSE). To keep the project sustainable, it is
+additionally offered under a commercial licence by the maintainer (dual licensing) — for example
+for managed/SaaS offerings.
+
+For that to remain possible, every contribution needs a clear licensing basis. By opening a pull
+request you agree that:
+
+1. **You have the right to submit the work** (it is your own, or you are permitted to contribute
+   it), in the sense of the [Developer Certificate of Origin](https://developercertificate.org/).
+2. **Your contribution is licensed to the project under AGPL-3.0**, like the rest of the code.
+3. **You additionally grant the maintainer (BEKO2210) a perpetual, worldwide, non-exclusive,
+   irrevocable, royalty-free licence** to use, modify, sublicense and relicense your contribution
+   as part of Knowledge Hub — including under commercial licence terms.
+
+You keep the copyright to your work; nothing here takes it away. This grant simply keeps dual
+licensing possible after your code is merged. If you cannot or do not want to agree to this,
+please open an issue instead of a PR — ideas are just as welcome.
+
+Please add a `Signed-off-by: Your Name <you@example.com>` line to your commits
+(`git commit -s`) to confirm the above.
 
 ## What gets merged quickly
 

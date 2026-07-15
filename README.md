@@ -283,6 +283,12 @@ Code comments are in German.
 [AGPL-3.0](LICENSE). Self-host it, modify it, do as you like — but if you run a modified version
 **as a service for other people**, you have to publish your changes.
 
+**Running it commercially without the AGPL's obligations** (managed hosting, SaaS, embedding into
+a closed product)? A commercial licence is available — contact
+[belkis.aslani@gmail.com](mailto:belkis.aslani@gmail.com). Contributions are accepted under a
+relicensing grant precisely so this dual-licensing model stays possible
+(see [CONTRIBUTING.md](CONTRIBUTING.md#licensing-of-contributions)).
+
 Graph extraction is done by [graphifyy](https://github.com/safishamsi/graphify)
 (MIT, © Safi Shamsi); retrieval is Knowledge Hub's own hybrid engine (`semantic.py`), with the
 graphify CLI kept as a fallback. Credit where it is due, independence where it matters.
