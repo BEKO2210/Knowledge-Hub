@@ -283,6 +283,23 @@ const EN = {
   /* Audit */
   'Noch nichts protokolliert': 'Nothing logged yet',
   'Sobald ein Secret gelesen, gesetzt oder gelöscht wird, erscheint hier der Eintrag — mit Zeitpunkt und Client.': 'As soon as a secret is read, set or deleted, the entry shows up here — with timestamp and client.',
+
+  /* Post-Run-40: Fehler-Quittierung + Mapping-Verlauf + Graph-Bestand */
+  'Als behoben quittieren': 'Acknowledge as fixed',
+  'Quittiert — bleibt im Log nachvollziehbar': 'Acknowledged — stays traceable in the log',
+  'übersprungen': 'skipped',
+  'fehlgeschlagen': 'failed',
+  'ohne Zahlen': 'no figures',
+  'zu klären': 'needs review',
+  'archiviert': 'archived',
+  'Archivieren': 'Archive',
+  'Als Projekt registrieren': 'Register as project',
+  'Entfernen': 'Remove',
+  'Herkunft dieses Graphen (Pflicht — z. B. „Benchmark-Repo psf/requests, gemappt für den öffentlichen Benchmark“):': 'Origin of this graph (required — e.g. “benchmark repo psf/requests, mapped for the public benchmark”):',
+  'Archiviert — Herkunft dokumentiert': 'Archived — origin documented',
+  'Oben „Hinzufügen“ nutzen und den QUELLordner des Projekts wählen — der Graph gehört dann dazu.': 'Use “Add” above and pick the project’s SOURCE folder — the graph will belong to it.',
+  'Graph „{n}“ vollständig entfernen? Hub-Kopie, Index und gespeicherte Antworten werden gelöscht. Der Quellordner bleibt unberührt.': 'Remove graph “{n}” completely? Hub copy, index and saved answers will be deleted. The source folder stays untouched.',
+  'Entfernt': 'Removed',
 };
 
 function t(s) {
@@ -549,7 +566,7 @@ function tab(name) {
   closeSide();
   if (name === 'secrets') loadSecrets();
   if (name === 'audit') loadAudit();
-  if (name === 'mapping') { loadMapping(); loadProjectsCard(); }
+  if (name === 'mapping') { loadMapping(); loadProjectsCard(); loadGraphStock(); }
   if (name === 'health') { loadHealth(); loadTwoFA(); loadVault(); loadBackup(); }
   if (name === 'connect') loadConnect();
   if (name === 'graph') setTimeout(fgResize, 0);
@@ -909,9 +926,22 @@ async function loadHistory() {
       `<svg class="ic caret" style="width:18px;height:18px" viewBox="0 0 24 24"><use href="#i-back"/></svg>`;
     sum.onclick = () => row.classList.toggle('open');
     const det = document.createElement('div'); det.className = 'histdetail';
-    const prs = r.projects.filter(p => p.nodes != null).map(p => {
+    /* Bug 1 (Post-Run-40): Projekte ohne Zahlen verschwanden hier komplett aus dem
+       Verlauf. Jetzt erscheint jedes Projekt — mit Zahlen, oder mit seinem Status. */
+    const prs = r.projects.map(p => {
       const d = p.delta == null ? '' : `<span class="delta ${deltaCls(p.delta)}">${deltaTxt(p.delta)}</span>`;
-      return `<div class="pr"><span class="pn">${escapeHtml(p.name)}</span><span class="pv">${t2('{n} Knoten', {n: p.nodes})}</span>${d}</div>`;
+      let val, style = '';
+      if (p.nodes != null) {
+        val = t2('{n} Knoten', {n: p.nodes});
+      } else if (p.status === 'skipped') {
+        val = t('übersprungen'); style = ' style="color:var(--mut2)"';
+      } else if (p.status === 'failed') {
+        val = t('fehlgeschlagen'); style = ' style="color:var(--red)"';
+      } else {
+        val = t('ohne Zahlen'); style = ' style="color:var(--mut2)"';
+      }
+      const title = p.error ? ` title="${escapeHtml(p.error)}"` : '';
+      return `<div class="pr"${title}><span class="pn">${escapeHtml(p.name)}</span><span class="pv"${style}>${val}</span>${d}</div>`;
     }).join('');
     det.innerHTML = prs || `<div class="pr" style="color:var(--mut2)">${t('Keine Projektdaten für diesen Lauf.')}</div>`;
 
@@ -969,6 +999,62 @@ async function loadHistory() {
   }
 }
 /* --- Projekte verwalten --- */
+/* Graph-Bestand (Post-Run-40, Bug 2): unregistrierte + archivierte Graphen mit Aktionen.
+   Die Karte erscheint nur, wenn es etwas zu zeigen gibt — im Normalzustand bleibt sie weg. */
+async function loadGraphStock() {
+  const card = $('graphstockcard'), box = $('graphstock');
+  let inv;
+  try { inv = await holeJson('/ui/api/mapping/graphs'); }
+  catch { card.style.display = 'none'; return; }
+  const rows = [];
+  for (const g of inv.unregistered || []) rows.push({...g, _kind: 'unregistered'});
+  for (const g of inv.archived || []) rows.push({...g, _kind: 'archived'});
+  if (!rows.length) { card.style.display = 'none'; return; }
+  card.style.display = '';
+  box.innerHTML = '';
+  for (const g of rows) {
+    const row = document.createElement('div');
+    row.className = 'srow';
+    const badge = g._kind === 'unregistered'
+      ? `<span class="chip" style="color:var(--amber)">${t('zu klären')}</span>`
+      : `<span class="chip">${t('archiviert')}</span>`;
+    const zahlen = g.nodes != null ? t2('{n} Knoten', {n: g.nodes}) : t('ohne Zahlen');
+    const herkunft = g._kind === 'archived' && g.origin ? `<div style="color:var(--mut2);font-size:.76rem;margin-top:3px">${escapeHtml(g.origin)}</div>` : '';
+    row.innerHTML = `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <span style="font-weight:600">${escapeHtml(g.name)}</span>${badge}
+      <span style="color:var(--mut);font-size:.82rem">${zahlen}</span>
+      <span style="margin-left:auto;display:flex;gap:8px" class="acts"></span></div>${herkunft}`;
+    const acts = row.querySelector('.acts');
+    const mk = (label, fn, danger) => {
+      const b = document.createElement('button');
+      b.className = 'btn ghost sm';
+      if (danger) b.style.color = 'var(--red)';
+      b.textContent = label; b.onclick = fn; acts.appendChild(b);
+    };
+    if (g._kind === 'unregistered') {
+      mk(t('Archivieren'), async () => {
+        const origin = prompt(t('Herkunft dieses Graphen (Pflicht — z. B. „Benchmark-Repo psf/requests, gemappt für den öffentlichen Benchmark“):'));
+        if (!origin) return;
+        const r = await api('/ui/api/mapping/graphs', {method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({name: g.name, action: 'archive', origin})});
+        toast(r.ok ? t('Archiviert — Herkunft dokumentiert') : t('Fehlgeschlagen'), r.ok);
+        loadGraphStock(); loadHealth?.();
+      });
+      mk(t('Als Projekt registrieren'), () => {
+        toast(t('Oben „Hinzufügen“ nutzen und den QUELLordner des Projekts wählen — der Graph gehört dann dazu.'));
+      });
+    }
+    mk(t('Entfernen'), async () => {
+      if (!confirm(t2('Graph „{n}“ vollständig entfernen? Hub-Kopie, Index und gespeicherte Antworten werden gelöscht. Der Quellordner bleibt unberührt.', {n: g.name}))) return;
+      const r = await api('/ui/api/mapping/graphs', {method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({name: g.name, action: 'remove'})});
+      toast(r.ok ? t('Entfernt') : t('Fehlgeschlagen'), r.ok);
+      loadGraphStock();
+    }, true);
+    box.appendChild(row);
+  }
+}
+
 async function loadProjectsCard() {
   const items = await holeJson('/ui/api/mapping/projects');
   const box = $('projlist');
@@ -1927,6 +2013,20 @@ async function loadHealth() {
     row.querySelector('.hname').textContent = c.name;
     row.querySelector('.hdetail').textContent = c.detail;
     if (c.fix) { const f = row.querySelector('.hfix'); f.textContent = '→ ' + c.fix; f.style.display = 'block'; }
+    // Unerwartete Fehler: nach behobener Ursache quittieren — der Log-Eintrag bleibt,
+    // nur die Warnung gilt als erledigt (und kehrt bei neuen Fehlern zurück).
+    if (c.id === 'errors' && c.status === 'warn') {
+      const ab = document.createElement('button');
+      ab.className = 'btn ghost';
+      ab.style.cssText = 'margin-top:10px;min-height:36px;font-size:.8rem;margin-left:34px';
+      ab.textContent = t('Als behoben quittieren');
+      ab.onclick = async () => {
+        const r = await api('/ui/api/errors/ack', {method: 'POST'});
+        toast(r.ok ? t('Quittiert — bleibt im Log nachvollziehbar') : t('Fehlgeschlagen'), r.ok);
+        loadHealth();
+      };
+      row.querySelector('div > div').appendChild(ab);
+    }
     // Beim Angriffsschutz einen „Freigeben"-Knopf anbieten (falls Selbst-Aussperrung)
     if (c.name === 'Angriffsschutz' && c.status === 'err') {
       const ub = document.createElement('button');

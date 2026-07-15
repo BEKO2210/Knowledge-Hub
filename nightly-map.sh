@@ -26,6 +26,10 @@ exec >>"$LOG" 2>&1
 # Backend-Konfiguration laden (BACKEND, MODEL, SECRET, ENVVAR, API_TIMEOUT, LOCAL)
 eval "$("$PY" "$HUB/config.py" mapping)"
 echo "=== nightly-map start $(date -Is) backend=$BACKEND model=$MODEL ==="
+# Maschinenlesbares Lauf-Protokoll (Post-Run-40 Bug 1): die Historie liest ab jetzt
+# build-logs/runs/run-*.json statt Regexe über diesen freien Logtext.
+RUN_ID="$("$PY" "$HUB/runlog.py" start nightly "$BACKEND" "$MODEL" 2>/dev/null || echo "")"
+runlog() { [ -n "$RUN_ID" ] && "$PY" "$HUB/runlog.py" "$@" 2>/dev/null || true; }
 
 EXTRA_ARGS=()
 if [ -n "$SECRET" ]; then
@@ -50,6 +54,7 @@ fi
 mapfile -t PROJECTS < <("$PY" "$HUB/config.py" projects)
 if [ ${#PROJECTS[@]} -eq 0 ]; then
   echo "Keine aktivierten Projekte in config.yaml — nichts zu tun."
+  runlog finish "$RUN_ID"
   echo "=== nightly-map done $(date -Is) ==="
   exit 0
 fi
@@ -81,11 +86,13 @@ for p in "${PROJECTS[@]}"; do
   exec 8>"$LOCKDIR/build-$NAME_LC.lock"
   if ! flock -w 60 8; then
     echo "ÜBERSPRUNGEN: $p ist seit 60s gesperrt (anderer Build läuft) — nächster Nachtlauf holt es nach"
+    runlog project "$RUN_ID" "$p" skipped "gesperrt (anderer Build läuft)"
     continue
   fi
   if ! msg="$(preflight "$p")"; then
     echo "$msg"
     echo "extract ÜBERSPRUNGEN: $p — im Diagnose-Tab reparierbar"
+    runlog project "$RUN_ID" "$p" skipped "$msg"
     continue
   fi
   [ -n "$msg" ] && echo "$msg"
@@ -100,6 +107,7 @@ for p in "${PROJECTS[@]}"; do
     if ! "$HUB/tools/graphify-cluster-force" "$p" --no-label; then
       echo "cluster-only fehlgeschlagen: $p — stelle vorherige Generation wieder her"
       "$PY" "$HUB/buildmeta.py" restore "$p" || echo "PROBLEM: restore fehlgeschlagen: $p"
+      runlog project "$RUN_ID" "$p" failed "cluster-only fehlgeschlagen (vorherige Generation wiederhergestellt)"
       continue
     fi
   else
@@ -108,6 +116,7 @@ for p in "${PROJECTS[@]}"; do
       --backend "$BACKEND" --model "$MODEL" --api-timeout "$API_TIMEOUT" "${EXTRA_ARGS[@]}"; then
       echo "extract FEHLGESCHLAGEN: $p — stelle vorherige Generation wieder her"
       "$PY" "$HUB/buildmeta.py" restore "$p" || echo "PROBLEM: restore fehlgeschlagen: $p"
+      runlog project "$RUN_ID" "$p" failed "extract fehlgeschlagen (vorherige Generation wiederhergestellt)"
       continue
     fi
   fi
@@ -126,10 +135,16 @@ for p in "${PROJECTS[@]}"; do
   if ! "$PY" "$HUB/buildmeta.py" finalize "$p"; then
     echo "Generation ABGELEHNT: $p — stelle vorherige wieder her"
     "$PY" "$HUB/buildmeta.py" restore "$p" || echo "PROBLEM: restore fehlgeschlagen: $p"
+    runlog project "$RUN_ID" "$p" failed "Generation vom Abnahme-Gate abgelehnt"
     continue
   fi
 
-  "$GRAPHIFY_SYNC" "$p" || echo "sync fehlgeschlagen: $p"
+  if "$GRAPHIFY_SYNC" "$p"; then
+    runlog project "$RUN_ID" "$p" success
+  else
+    echo "sync fehlgeschlagen: $p"
+    runlog project "$RUN_ID" "$p" success "sync fehlgeschlagen (Graph selbst ist abgenommen)"
+  fi
   exec 8>&-   # Projekt-Sperre freigeben (continue-Pfade heilen sich beim nächsten exec 8> selbst)
 done
 
@@ -165,4 +180,5 @@ else
   echo "--- Sicherung übersprungen: keine BACKUP_PASSPHRASE gesetzt"
 fi
 
+runlog finish "$RUN_ID"
 echo "=== nightly-map done $(date -Is) ==="

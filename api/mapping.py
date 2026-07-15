@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess
 import threading
+import time
 from pathlib import Path
 
 from starlette.requests import Request
@@ -111,6 +112,11 @@ _RUN_START_RE = re.compile(r"=== nightly-map start (\S+)(?: backend=(\S+))? mode
 _RUN_DONE_RE = re.compile(r"=== nightly-map done (\S+) ===")
 _PROJ_LINE_RE = re.compile(r"^--- (\S+) \(")
 _WROTE_RE = re.compile(r"wrote \S*?/graph\.json: (\d+) nodes, (\d+) edges")
+# Seit dem Pipeline-Umbau (Run 7/8) steht die abgenommene Generation so im Log —
+# ohne dieses Muster zeigten die letzten Läufe keine Knotenzahlen mehr (Bug 1):
+_GEN_RE = re.compile(
+    r"Generation abgenommen: (g-\S+) \(\{'nodes': (\d+), 'edges': (\d+), 'communities': (\d+)\}"
+)
 _COST_RE = re.compile(r"est\. cost [^:]*: \$([0-9.]+)")
 _TOK_RE = re.compile(r"tokens: ([\d,]+) in / ([\d,]+) out")
 _FAIL_RE = re.compile(r"FEHLGESCHLAGEN:?\s*(\S+)?")
@@ -173,6 +179,15 @@ def _parse_runs() -> list[dict]:
             if m and cur["projects"]:
                 cur["projects"][-1]["nodes"] = int(m.group(1))
                 cur["projects"][-1]["edges"] = int(m.group(2))
+                continue
+            m = _GEN_RE.search(line)
+            if m and cur["projects"]:
+                cur["projects"][-1].update(
+                    build_id=m.group(1),
+                    nodes=int(m.group(2)),
+                    edges=int(m.group(3)),
+                    communities=int(m.group(4)),
+                )
                 continue
             m = _COST_RE.search(line)
             if m:
@@ -244,9 +259,106 @@ def _set_dismissed(starts: set[str]) -> None:
     tmp.replace(DISMISSED_FILE)
 
 
+# Bewusst KEINE eingefrorene Konstante: der Pfad folgt NIGHTLY_LOG_DIR zur Laufzeit
+# (Tests patchen das Verzeichnis; eine Import-Zeit-Kopie würde am Patch vorbeilesen).
+
+
+def _epoch(iso: str) -> float:
+    from datetime import datetime
+
+    try:
+        return datetime.fromisoformat(iso).timestamp()
+    except (ValueError, TypeError):
+        return 0.0
+
+
+def _load_run_files() -> list[dict]:
+    """Maschinenlesbare Lauf-Artefakte (runlog.py) im Format des Verlaufs.
+
+    Das ist seit Post-Run-40 die verbindliche Quelle; das Log-Parsing bleibt nur für
+    Läufe aus der Zeit davor. Kaputte oder halbe Dateien werden übersprungen — sie
+    dürfen die Historie nie zerstören.
+    """
+    runs: list[dict] = []
+    try:
+        dateien = sorted((NIGHTLY_LOG_DIR / "runs").glob("run-*.json"))
+    except OSError:
+        return runs
+    for f in dateien:
+        try:
+            doc = json.loads(f.read_text(encoding="utf-8"))
+            projekte = [
+                {
+                    "name": p.get("name", "?"),
+                    "nodes": p.get("nodes"),
+                    "edges": p.get("edges"),
+                    "communities": p.get("communities"),
+                    "delta": p.get("delta_nodes"),
+                    "build_id": p.get("build_id"),
+                    "status": p.get("status", "success"),
+                    "error": p.get("error", ""),
+                }
+                for p in doc.get("projects", [])
+            ]
+            fehl = [p for p in projekte if p["status"] == "failed"]
+            nodes = [p["nodes"] for p in projekte if p["nodes"] is not None]
+            deltas = [p["delta"] for p in projekte if p["delta"] is not None]
+            runs.append(
+                {
+                    "start": doc.get("started_at", f.stem.removeprefix("run-")),
+                    "backend": doc.get("backend", ""),
+                    "model": doc.get("model", ""),
+                    "kind": doc.get("kind", "nightly"),
+                    "status": doc.get("status", "running"),
+                    "aborted": doc.get("finished_at") is None,
+                    "projects": projekte,
+                    "failed_names": [p["name"] for p in fehl],
+                    "failures": [{"project": p["name"], "kind": "extract"} for p in fehl],
+                    "backup_failed": False,
+                    "cost": 0.0,
+                    "tokens_in": 0,
+                    "tokens_out": 0,
+                    "duration_s": doc.get("duration_seconds"),
+                    "nodes_total": sum(nodes),
+                    "node_delta": sum(deltas),
+                    "project_count": len(projekte),
+                    "failed": len(fehl),
+                }
+            )
+        except Exception:  # noqa: BLE001 - eine kaputte Datei kippt die Historie nicht
+            continue
+    return runs
+
+
+def _merge_runs() -> list[dict]:
+    """Log-Läufe + Datei-Läufe chronologisch, ohne Doppelte.
+
+    Neue Läufe stehen in BEIDEN Quellen (Textlog fürs Lesen, JSON als Vertrag).
+    Ein Log-Lauf, dessen Start näher als 3 Minuten an einem Datei-Lauf liegt, ist
+    derselbe Lauf — die Datei gewinnt (validierte Zahlen, Projektstatus). Kosten/
+    Tokens kennt nur das Textlog; sie werden in den Datei-Lauf übernommen.
+    """
+    datei_runs = _load_run_files()
+    log_runs = _parse_runs()
+    datei_zeiten = [(_epoch(r["start"]), r) for r in datei_runs]
+    ergebnis = list(datei_runs)
+    for lr in log_runs:
+        t = _epoch(lr["start"])
+        partner = next((dr for dt, dr in datei_zeiten if abs(dt - t) < 180), None)
+        if partner is None:
+            ergebnis.append(lr)
+        else:
+            for feld in ("cost", "tokens_in", "tokens_out"):
+                partner[feld] = lr.get(feld, 0) or partner.get(feld, 0)
+            if lr.get("backup_failed"):
+                partner["backup_failed"] = True
+    ergebnis.sort(key=lambda r: _epoch(r["start"]))
+    return ergebnis
+
+
 async def mapping_history(request: Request) -> JSONResponse:
-    """Verlauf aller Nacht-Läufe (neueste zuerst) — für Tabelle + Kosten-Sparkline."""
-    runs = _parse_runs()
+    """Verlauf aller Läufe (neueste zuerst) — für Tabelle + Kosten-Sparkline."""
+    runs = _merge_runs()
     quittiert = _dismissed()
     for r in runs:
         r["dismissed"] = r["start"] in quittiert
@@ -483,7 +595,146 @@ def _purge_graph_data(project_dir: Path) -> list[str]:
         shutil.rmtree(answers)
         removed.append(str(answers))
 
+    # 4) Chunk-Index (semantische Datei-Auszüge) — lag bisher außerhalb der Kaskade
+    import semantic
+
+    chunks = semantic.CHUNK_DIR / name
+    if chunks.is_dir():
+        shutil.rmtree(chunks)
+        removed.append(str(chunks))
+
     return removed
+
+
+# --- Graph-Bestand: Registrierung ist die Quelle der Wahrheit (Post-Run-40, Bug 2) ----
+# Jeder sichtbare Graph gehört zu genau einem registrierten Projekt (aktiv ODER
+# archiviert). Was übrig bleibt, ist ein Waisen-Graph: Er wird nicht still angezeigt,
+# sondern als zu klärender Bestand geführt — mit den Aktionen registrieren/archivieren/
+# entfernen. Der Quellordner eines Projekts wird hier grundsätzlich NIE angefasst.
+
+
+def _graph_dirs() -> list[str]:
+    try:
+        return sorted(
+            d.name
+            for d in KNOWLEDGE_ROOT.iterdir()
+            if d.is_dir()
+            and d.name not in RESERVED_GRAPH_DIRS
+            and (d / "graphify-out" / "graph.json").exists()
+        )
+    except OSError:
+        return []
+
+
+def _graph_counts(name: str) -> dict:
+    try:
+        g = json.loads((KNOWLEDGE_ROOT / name / "graphify-out" / "graph.json").read_text(encoding="utf-8"))
+        nodes = g.get("nodes", [])
+        return {
+            "nodes": len(nodes),
+            "edges": len(g.get("links", g.get("edges", []))),
+            "communities": len({n.get("community") for n in nodes if n.get("community") is not None}),
+        }
+    except (OSError, ValueError):
+        return {"nodes": None, "edges": None, "communities": None}
+
+
+def graph_inventory() -> dict:
+    """Alle Hub-Graphen, eingeteilt in registriert / archiviert / unregistriert (Waisen)."""
+    registriert = {Path(e["path"]).expanduser().name.lower() for e in config.project_entries()}
+    archiviert = {a["name"]: a for a in config.archived_graphs()}
+    inventar = {"registered": [], "archived": [], "unregistered": []}
+    for name in _graph_dirs():
+        info = {"name": name, **_graph_counts(name)}
+        if name in registriert:
+            inventar["registered"].append(info)
+        elif name in archiviert:
+            a = archiviert[name]
+            inventar["archived"].append({**info, "origin": a["origin"], "archived_at": a["archived_at"]})
+        else:
+            mf = KNOWLEDGE_ROOT / name / "graphify-out" / "build-manifest.json"
+            try:
+                m = json.loads(mf.read_text(encoding="utf-8"))
+                info["build_id"] = m.get("build_id")
+                info["last_mapped"] = m.get("created_at")
+            except (OSError, ValueError):
+                info["build_id"] = info["last_mapped"] = None
+            inventar["unregistered"].append(info)
+    return inventar
+
+
+async def mapping_graphs(request: Request) -> JSONResponse:
+    return JSONResponse(graph_inventory())
+
+
+def _purge_hub_graph(name: str) -> list[str]:
+    """Hub-seitige Artefakte eines Graphen entfernen — niemals den Quellordner."""
+    import semantic
+
+    removed: list[str] = []
+    if not name or name in RESERVED_GRAPH_DIRS:
+        return removed
+    hub_copy = KNOWLEDGE_ROOT / name
+    if hub_copy.is_dir() and hub_copy.resolve().parent == KNOWLEDGE_ROOT.resolve():
+        shutil.rmtree(hub_copy)
+        removed.append(str(hub_copy))
+        _git_purge_commit(name)
+    for extra in (DATA_DIR / "answers" / name, semantic.CHUNK_DIR / name):
+        if extra.is_dir():
+            shutil.rmtree(extra)
+            removed.append(str(extra))
+    return removed
+
+
+async def mapping_graph_action(request: Request) -> JSONResponse:
+    """Waisen-/Archiv-Graphen verwalten: archivieren oder vollständig entfernen."""
+    body = await json_object(request)
+    name = str(body.get("name", "")).strip().lower()
+    action = str(body.get("action", "")).strip()
+    inventar = graph_inventory()
+    unreg = {g["name"] for g in inventar["unregistered"]}
+    arch = {g["name"] for g in inventar["archived"]}
+
+    if action == "archive":
+        if name not in unreg:
+            return JSONResponse({"error": T("Kein unregistrierter Graph mit diesem Namen")}, status_code=404)
+        origin = str(body.get("origin", "")).strip()[:300]
+        if not origin:
+            return JSONResponse(
+                {"error": T("Herkunft (origin) ist Pflicht beim Archivieren")}, status_code=400
+            )
+        entries = config.archived_graphs()
+        entries.append(
+            {
+                "name": name,
+                "origin": origin,
+                "archived_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            }
+        )
+        config.save_archived_graphs(entries)
+        vault.audit("GRAPH-ARCHIVE", f"{name} ({origin[:80]})", client="web-ui")
+        return JSONResponse({"ok": True})
+
+    if action == "remove":
+        if name not in unreg and name not in arch:
+            return JSONResponse(
+                {"error": T("Nur unregistrierte oder archivierte Graphen sind hier entfernbar")},
+                status_code=404,
+            )
+        import locks
+
+        try:
+            with locks.project_lock(name, timeout=5):
+                removed = _purge_hub_graph(name)
+        except locks.LockedError:
+            return JSONResponse(
+                {"error": T("Graph wird gerade gebaut — bitte später erneut")}, status_code=409
+            )
+        config.save_archived_graphs([a for a in config.archived_graphs() if a["name"] != name])
+        vault.audit("GRAPH-PURGE", name, client="web-ui")
+        return JSONResponse({"ok": True, "removed": removed})
+
+    return JSONResponse({"error": T("Unbekannte Aktion (archive|remove)")}, status_code=400)
 
 
 async def mapping_project_update(request: Request) -> JSONResponse:

@@ -222,6 +222,37 @@ def project_entries(cfg: dict | None = None) -> list[dict]:
     return out
 
 
+def archived_graphs(cfg: dict | None = None) -> list[dict]:
+    """Archivierte Hub-Graphen (Post-Run-40, Bug 2): Bestände mit dokumentierter Herkunft.
+
+    Ein archivierter Graph gehört zur Projektregistrierung (Quelle der Wahrheit), wird
+    aber nicht nächtlich gemappt: typisch Benchmark-Beweismaterial oder stillgelegte
+    Projekte, deren Graph als Beleg erhalten bleibt. Format je Eintrag:
+    {"name": <hub-ordner>, "origin": <woher/warum>, "archived_at": <ISO>}.
+    """
+    cfg = cfg or load()
+    out = []
+    for e in cfg.get("archived_graphs", []) or []:
+        if isinstance(e, dict) and e.get("name"):
+            out.append(
+                {
+                    "name": str(e["name"]),
+                    "origin": str(e.get("origin", "")),
+                    "archived_at": str(e.get("archived_at", "")),
+                }
+            )
+    return out
+
+
+def save_archived_graphs(entries: list[dict]) -> None:
+    """Persistiert archived_graphs in config.yaml (Rest bleibt erhalten)."""
+
+    def mutate(data: dict) -> None:
+        data["archived_graphs"] = entries
+
+    _update_yaml(mutate)
+
+
 def backends(cfg: dict | None = None) -> dict:
     return (cfg or load())["mapping"].get("backends", {})
 

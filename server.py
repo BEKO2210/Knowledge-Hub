@@ -115,19 +115,31 @@ def _projects() -> list[str]:
 
 @mcp.tool
 def projects_list() -> list[dict]:
-    """List all projects that have a knowledge graph, with basic stats."""
+    """List all projects that have a knowledge graph, with basic stats.
+
+    Every graph is tied to the project registry (Post-Run-40, Bug 2): archived graphs
+    carry `archived: true` plus their documented origin; a graph without any registry
+    entry is flagged `unregistered: true` so it never appears silently as a normal
+    project — resolve it in the web UI (register / archive / remove).
+    """
+    registriert = {Path(e["path"]).expanduser().name.lower() for e in config.project_entries()}
+    archiviert = {a["name"]: a for a in config.archived_graphs()}
     out = []
     for name in _projects():
         g = json.loads((KNOWLEDGE_ROOT / name / "graphify-out" / "graph.json").read_text())
         nodes = g.get("nodes", [])
-        out.append(
-            {
-                "project": name,
-                "nodes": len(nodes),
-                "edges": len(g.get("links", g.get("edges", []))),
-                "communities": len({n.get("community") for n in nodes if n.get("community") is not None}),
-            }
-        )
+        eintrag = {
+            "project": name,
+            "nodes": len(nodes),
+            "edges": len(g.get("links", g.get("edges", []))),
+            "communities": len({n.get("community") for n in nodes if n.get("community") is not None}),
+        }
+        if name in archiviert:
+            eintrag["archived"] = True
+            eintrag["origin"] = archiviert[name]["origin"]
+        elif name not in registriert:
+            eintrag["unregistered"] = True
+        out.append(eintrag)
     return out
 
 
@@ -246,7 +258,14 @@ def _build_worker(name: str, path: Path) -> None:
 
 def _build_worker_gesperrt(name: str, path: Path) -> None:
     """Der eigentliche Lauf — wird nur mit gehaltener Projekt-Sperre betreten."""
+    import runlog
+
     ende, grund = "failed", ""
+    run_id = ""
+    try:
+        run_id = runlog.start("mcp", CFG["mapping"].get("backend", ""), CFG["mapping"].get("model", ""))
+    except Exception:  # noqa: BLE001 - das Protokoll darf den Build nie verhindern
+        pass
     try:
         BUILD_LOG_DIR.mkdir(exist_ok=True)
         log_file = BUILD_LOG_DIR / f"{name}.log"
@@ -361,6 +380,13 @@ def _build_worker_gesperrt(name: str, path: Path) -> None:
     finally:
         with _builds_lock:
             _builds[name].update(status=ende, finished=int(time.time()), error=grund or None)
+        # Lauf-Protokoll (Post-Run-40 Bug 1): auch MCP-Builds erscheinen im Mapping-Verlauf.
+        if run_id:
+            try:
+                runlog.project(run_id, str(path), "success" if ende == "done" else "failed", grund)
+                runlog.finish(run_id)
+            except Exception:  # noqa: BLE001
+                pass
 
 
 @mcp.tool

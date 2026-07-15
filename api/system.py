@@ -291,6 +291,65 @@ async def backup_setup(request: Request) -> JSONResponse:
     return JSONResponse({"ok": True, "passphrase": pp})
 
 
+ERRORS_ACK_FILE = DATA_DIR / "errors_ack.json"
+
+
+def _error_acks() -> dict[str, str]:
+    """Quittierte Fehler-Referenzen (ref -> ISO-Zeit der Bestätigung)."""
+    try:
+        data = json.loads(ERRORS_ACK_FILE.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _recent_errors() -> list[dict]:
+    """Unquittierte Einträge aus errors.log innerhalb der letzten 24 Stunden.
+
+    Kaputte oder abgeschnittene Zeilen werden übersprungen — das Log darf die
+    Diagnose nie kippen (und tut es damit auch bei Teil-Schreibern nicht).
+    """
+    fehler_log = DATA_DIR / "errors.log"
+    if not fehler_log.exists():
+        return []
+    acked = _error_acks()
+    grenze = time.time() - 86400
+    offene: list[dict] = []
+    for zeile in fehler_log.read_text(errors="replace").splitlines()[-50:]:
+        try:
+            e = json.loads(zeile)
+            t = time.mktime(time.strptime(e["zeit"][:19], "%Y-%m-%dT%H:%M:%S"))
+            if t >= grenze and e.get("ref") not in acked:
+                offene.append(e)
+        except Exception:  # noqa: BLE001 - eine kaputte Zeile darf die Diagnose nicht kippen
+            continue
+    return offene
+
+
+async def errors_ack(request: Request) -> JSONResponse:
+    """Aktuelle Fehler-Warnungen als behoben quittieren (Ursache bestätigt).
+
+    Quittiert werden die JETZT offenen Referenzen des 24-Stunden-Fensters — nichts
+    wird gelöscht: errors.log behält jeden Eintrag, die Quittierung selbst landet
+    im Audit-Log. Taucht ein Fehler danach erneut auf, bekommt er eine neue Referenz
+    und warnt wieder.
+    """
+    offene = _recent_errors()
+    if not offene:
+        return JSONResponse({"acked": 0})
+    acks = _error_acks()
+    stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    for e in offene:
+        ref = e.get("ref", "")
+        if ref:
+            acks[ref] = stamp
+            vault.audit("ERROR-ACK", ref, client="web-ui")
+    tmp = ERRORS_ACK_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(acks, indent=1), encoding="utf-8")
+    tmp.replace(ERRORS_ACK_FILE)
+    return JSONResponse({"acked": len(offene)})
+
+
 def _probe_public(public: str) -> tuple[str, str]:
     """Prüft, ob der Hub von außen erreichbar ist (blockierend — im Thread aufrufen)."""
     # User-Agent ist Pflicht: Cloudflare & Co. blocken anonyme Clients mit 403.
@@ -448,6 +507,30 @@ async def health(request: Request) -> JSONResponse:
         _check(T("Projekte"), pstatus, pdetail, T("Im Mapping-Tab prüfen.") if pstatus != "ok" else "")
     )
 
+    # --- Graph-Bestand (Post-Run-40, Bug 2): kein Graph ohne Registrierung ---
+    from api import mapping as _mapping
+
+    inventar = {"unregistered": [], "archived": []}
+    try:
+        inventar = _mapping.graph_inventory()
+    except Exception:  # noqa: BLE001 - Bestandsprüfung darf die Diagnose nicht kippen
+        pass
+    waisen = [g["name"] for g in inventar["unregistered"]]
+    if waisen:
+        c = _check(
+            T("Graph-Bestand"),
+            "warn",
+            T("{n} Graph(en) ohne Projekt-Eintrag: {names}", n=len(waisen), names=", ".join(waisen[:4])),
+            T("Im Mapping-Tab unter „Graph-Bestand“ klären: registrieren, archivieren oder entfernen."),
+        )
+    else:
+        detail = T("jeder Graph ist registriert")
+        if inventar["archived"]:
+            detail += " · " + T("{n} archiviert", n=len(inventar["archived"]))
+        c = _check(T("Graph-Bestand"), "ok", detail)
+    c["id"] = "graphs"
+    checks.append(c)
+
     # --- Speicherplatz ---
     du = _shutil.disk_usage(str(Path.home()))
     free_pct = du.free / du.total * 100
@@ -510,38 +593,33 @@ async def health(request: Request) -> JSONResponse:
 
     # Unerwartete Fehler: Das Log ist nur dann etwas wert, wenn man merkt, dass es
     # etwas enthält. Darum steht der Befund hier — sonst verstaubt es unbemerkt.
+    # Quittierte Referenzen (Ursache behoben + bestätigt) zählen nicht mehr als aktuelle
+    # Warnung; der Log-Eintrag selbst und die Quittierung bleiben im Audit nachvollziehbar.
+    offene = _recent_errors()
     fehler_log = DATA_DIR / "errors.log"
-    if fehler_log.exists() and fehler_log.stat().st_size > 0:
-        letzte = fehler_log.read_text(errors="replace").splitlines()[-50:]
-        seit_24h = []
-        grenze = time.time() - 86400
-        for zeile in letzte:
-            try:
-                e = json.loads(zeile)
-                t = time.mktime(time.strptime(e["zeit"][:19], "%Y-%m-%dT%H:%M:%S"))
-                if t >= grenze:
-                    seit_24h.append(e)
-            except Exception:  # noqa: BLE001 - eine kaputte Zeile darf die Diagnose nicht kippen
-                continue
-        if seit_24h:
-            letzter = seit_24h[-1]
-            checks.append(
-                _check(
-                    T("Unerwartete Fehler"),
-                    "warn",
-                    T(
-                        "{n} in den letzten 24 Std. · zuletzt {path} (Ref. {ref})",
-                        n=len(seit_24h),
-                        path=letzter["pfad"],
-                        ref=letzter["ref"],
-                    ),
-                    T("Details stehen in {file} — dort steht auch, woran es lag.", file=fehler_log),
-                )
-            )
-        else:
-            checks.append(_check(T("Unerwartete Fehler"), "ok", T("keine in den letzten 24 Std.")))
+    if not fehler_log.exists() or fehler_log.stat().st_size == 0:
+        c = _check(T("Unerwartete Fehler"), "ok", T("keine protokolliert"))
+        c["id"] = "errors"
+        checks.append(c)
+    elif offene:
+        letzter = offene[-1]
+        c = _check(
+            T("Unerwartete Fehler"),
+            "warn",
+            T(
+                "{n} in den letzten 24 Std. · zuletzt {path} (Ref. {ref})",
+                n=len(offene),
+                path=letzter["pfad"],
+                ref=letzter["ref"],
+            ),
+            T("Details stehen in {file} — nach behobener Ursache unten quittieren.", file=fehler_log),
+        )
+        c["id"] = "errors"
+        checks.append(c)
     else:
-        checks.append(_check(T("Unerwartete Fehler"), "ok", T("keine protokolliert")))
+        c = _check(T("Unerwartete Fehler"), "ok", T("keine offenen in den letzten 24 Std."))
+        c["id"] = "errors"
+        checks.append(c)
 
     graphs_size = _dir_size(KNOWLEDGE_ROOT)
     return JSONResponse(
