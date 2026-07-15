@@ -47,7 +47,7 @@ It runs on **your** machine. No third party sees your code or your keys.
 |  |  |
 |---|---|
 | 🕸️ **Knowledge graphs** | Every project becomes a graph: hub nodes, clusters, relations. Click a node to see what it touches, or ask for the shortest path between two concepts. |
-| 🎯 **Hybrid retrieval** | `graph_query` embeds your question with a local multilingual model (CPU, offline) and answers with graph structure *plus* the most relevant raw file excerpts. Benchmarked at **96 % hit rate** where lexical graph lookup scored 46 % — see [Benchmarks](#benchmarks). |
+| 🎯 **Hybrid retrieval** | `graph_query` embeds your question with a local multilingual model (CPU, offline) and answers with graph structure *plus* the most relevant raw file excerpts. Benchmarked at **85 % hit rate** where lexical graph lookup scored 58 % — see [Benchmarks](#benchmarks). |
 | 🔐 **Encrypted vault** | AES-256-GCM. The master key is wrapped twice — once by your password, once by a machine key — so the hub can survive a reboot unattended, while the file on disk stays useless without one of them. |
 | 🤖 **A real MCP server** | Streamable HTTP, OAuth 2.1 + PKCE with dynamic client registration. Connect Claude with a URL — no token copy-paste. |
 | 🌙 **Nightly mapping** | A timer re-maps every project while you sleep, incrementally: unchanged files cost nothing. Cost, duration and node growth per run are shown in the UI. |
@@ -188,15 +188,17 @@ Retrieval quality is measured, not claimed: a suite of gold questions with objec
 answers, scored by exact match on the retrieved context, identical token budget and hardware for
 every engine. It runs locally with zero LLM cost, and every run is stored as JSON.
 
+Latest run — **41 gold questions across 11 projects** (2026-07-15), same questions and budgets:
+
 | Engine | Hit rate @ 400 tokens | @ 1,200 tokens |
 |---|---|---|
-| Lexical graph lookup (graphify) | 42 % | 46 % |
-| Semantic graph engine (ours) | 65 % | 65 % |
-| RAG full-text chunks (ours) | 54 % | 96 % |
-| **Hybrid — what `graph_query` ships** | **69 %** | **96 %** |
+| Lexical graph lookup (graphify) | 56 % | 58 % |
+| **Hybrid — what `graph_query` ships** | **68 %** | **85 %** |
 
 Why hybrid: graph structure is cheap per token (wins tight budgets), raw file excerpts carry the
-literal facts (win large budgets). The hybrid splits every budget between both and wins twice.
+literal facts (win large budgets). The hybrid splits every budget between both — and stays clearly
+ahead of the lexical baseline. (Earlier numbers were higher on a smaller, easier question set; the
+figures above are the current set after harder public-library projects were added.)
 
 Full report with per-project results, methodology and the misses we publish alongside the hits:
 **[hub.it-handwerk-stuttgart.de/benchmarks.html](https://hub.it-handwerk-stuttgart.de/benchmarks.html)**
@@ -242,7 +244,7 @@ inconvenient to admit.
 pip install -r requirements-dev.txt
 playwright install chromium
 
-pytest          # 132 tests: unit, HTTP, retrieval engine, and end-to-end in a real browser
+pytest          # 322 tests: unit, HTTP, retrieval engine, and end-to-end in a real browser
 ruff check .    # lint
 ./deploy.sh     # test, roll out — and roll back if the hub stops answering
 ```
