@@ -137,6 +137,37 @@ def test_wertgrenze_gilt_im_vault(fresh_vault):
     assert audit.count("SET-REJECT") == 2
 
 
+# ---------------------------------------------------------------------------
+# R23-1: DoS durch große Eingaben — Body-Größenlimit vor Auth/Rate-Limit
+# ---------------------------------------------------------------------------
+def test_zu_grosser_body_wird_mit_413_abgelehnt(client):
+    """Ein riesiger Body an einem offenen (unauth) Endpunkt darf NICHT komplett in
+    den Speicher gelesen werden — Content-Length über der Grenze → 413, sofort."""
+    big = "x" * (3 * 1024 * 1024)  # 3 MiB, über der 2-MiB-Grenze
+    r = client.post(
+        "/ui/api/login",
+        content=f'{{"password":"{big}"}}',
+        headers={"Content-Type": "application/json"},
+    )
+    assert r.status_code == 413
+
+
+def test_grosser_body_auch_an_oauth_register_413(client):
+    big = "x" * (3 * 1024 * 1024)
+    r = client.post(
+        "/oauth/register",
+        content=f'{{"redirect_uris":["https://x/{big}"]}}',
+        headers={"Content-Type": "application/json"},
+    )
+    assert r.status_code == 413
+
+
+def test_normaler_login_body_geht_durch(client):
+    """Die Grenze darf legitime kleine Anfragen nicht treffen."""
+    r = client.post("/ui/api/login", json={"password": "falsch"})
+    assert r.status_code != 413
+
+
 def test_abgelehnter_name_steht_im_audit(client, auth, fresh_vault):
     r = client.post("/ui/api/secrets", json={"name": "böse/../x", "value": "v"}, headers=auth)
     assert r.status_code == 400

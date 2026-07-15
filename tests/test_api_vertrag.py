@@ -113,7 +113,10 @@ def test_abgelaufener_token_ist_401(client, fresh_vault):
 
 # --- 6. Zu große Payload: sauber begrenzt, kein Absturz ------------------------
 def test_uebergrosser_secret_wert_wird_abgewiesen(client, auth, fresh_vault):
-    r = client.post("/ui/api/secrets", headers=auth, json={"name": "gross", "value": "x" * (2 * 1024 * 1024)})
+    # Wert über der Vault-Grenze (SECRET_VALUE_MAX = 20 k), aber unter dem globalen
+    # Body-Limit (2 MiB, R23-1) — so prüft der Test weiterhin genau den 400-Pfad der
+    # Vault-Wertgrenze, nicht das (ebenfalls korrekte) 413 des Body-Limits.
+    r = client.post("/ui/api/secrets", headers=auth, json={"name": "gross", "value": "x" * 50_000})
     assert r.status_code == 400
     assert "error" in r.json()
 

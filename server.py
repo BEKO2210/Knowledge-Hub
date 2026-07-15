@@ -48,6 +48,36 @@ KNOWLEDGE_ROOT = config.path(os.environ.get("KNOWLEDGE_ROOT", CFG["paths"]["know
 GRAPHIFY_BIN = os.environ.get("GRAPHIFY_BIN", str(config.path(CFG["paths"]["graphify_bin"])))
 MCP_TOKEN = os.environ.get("MCP_TOKEN", "")
 
+# Härtestes zulässiges Request-Body-Maß. Kein Endpunkt braucht mehr (Secret-Wert max.
+# 20 k, Fragen/Config kurz), aber offene Endpunkte (Login, oauth/register, Setup) lasen
+# den Body VOR Auth und Rate-Limit komplett in den Speicher — ein einzelner riesiger
+# Body war ein DoS (R23-1). Die Grenze greift für ALLE HTTP-Anfragen, ganz vorne.
+_MAX_BODY = 2 * 1024 * 1024  # 2 MiB
+
+
+def _cap_receive(receive, limit: int):
+    """receive() so umhüllen, dass der gelesene Body hart bei `limit` gekappt wird —
+    auch ohne (oder mit lügender) Content-Length (chunked). Über der Grenze wird der
+    Body abgeschnitten und beendet; der Endpunkt sieht dann ≤ limit Bytes und lehnt
+    unlesbares JSON sauber als 400 ab, statt unbegrenzt Speicher zu belegen."""
+    seen = 0
+
+    async def wrapped():
+        nonlocal seen
+        msg = await receive()
+        if msg.get("type") == "http.request":
+            body = msg.get("body", b"")
+            if seen >= limit:
+                return {"type": "http.request", "body": b"", "more_body": False}
+            seen += len(body)
+            if seen > limit:
+                keep = len(body) - (seen - limit)
+                return {"type": "http.request", "body": body[:keep], "more_body": False}
+        return msg
+
+    return wrapped
+
+
 # Icons für die Connector-Liste in Claude/ChatGPT. Ohne sie zeigt der Client nur einen
 # Platzhalter. Die URLs MÜSSEN ohne Anmeldung erreichbar sein — /ui/static/ ist genau
 # dafür in der BearerGate freigegeben; alles andere liefert 401 und der Client bekommt
@@ -553,6 +583,18 @@ class BearerGate:
         if scope["type"] != "http":
             await self._inner(scope, receive, send)
             return
+        # Body-Größenlimit ganz vorne — vor Auth und Rate-Limit, für JEDEN Pfad
+        # (auch die offenen: Login, oauth/register, Setup). Honest große Anfragen mit
+        # Content-Length werden sofort mit 413 abgewiesen; alles andere hart gekappt.
+        cl = dict(scope.get("headers") or []).get(b"content-length")
+        if cl is not None:
+            try:
+                if int(cl) > _MAX_BODY:
+                    await JSONResponse({"error": "payload too large"}, status_code=413)(scope, receive, send)
+                    return
+            except ValueError:
+                pass
+        receive = _cap_receive(receive, _MAX_BODY)
         path = scope.get("path", "")
         if path.startswith("/.well-known/") or path.startswith("/oauth/"):
             await oauth.oauth_app(scope, receive, send)
