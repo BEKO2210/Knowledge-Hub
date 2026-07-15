@@ -64,6 +64,26 @@ def test_build_index_erzeugt_npz(fake_model, projekt):
     assert (out / "graphify-out" / semantic.INDEX_NAME).exists()
 
 
+# --- R11-2: Community-Benennung fließt in den Embedding-Text ------------------
+def test_node_text_nutzt_community_name():
+    n = {"label": "next_js_16", "community_name": "Framework", "rationale": "Version 16"}
+    t = semantic._node_text(n)
+    assert "Framework" in t and "next_js_16" in t
+
+
+def test_node_text_loest_community_ueber_labels_auf():
+    # Älterer Graph: nur community-ID, Name steht in .graphify_labels.json
+    n = {"label": "next_js_16", "community": 6}
+    t = semantic._node_text(n, labels={"6": "PWA (Next.js)"})
+    assert "PWA (Next.js)" in t
+
+
+def test_node_text_ignoriert_leeres_community_label():
+    # community_label ist in own-Graphen immer leer — kein leerer Trenner o. Ä.
+    n = {"label": "x", "community_label": ""}
+    assert semantic._node_text(n) == "x"
+
+
 def test_query_findet_semantisch_passende_knoten(fake_model, projekt):
     out, _ = projekt
     semantic.build_index(out)

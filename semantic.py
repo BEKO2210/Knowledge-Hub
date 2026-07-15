@@ -91,10 +91,26 @@ def _get_model():
         return _model
 
 
-def _node_text(n: dict) -> str:
+def _load_labels(project_dir: Path) -> dict:
+    """Community-Benennungen aus .graphify_labels.json (ID -> Name). graphify legt die
+    Namen dort ab, NICHT als community_label am Knoten (R11-2)."""
+    try:
+        return json.loads((project_dir / "graphify-out" / ".graphify_labels.json").read_text())
+    except (OSError, json.JSONDecodeError, ValueError):
+        return {}
+
+
+def _node_text(n: dict, labels: dict | None = None) -> str:
     parts = [n.get("label") or n.get("id") or ""]
-    if n.get("community_label"):
-        parts.append(str(n["community_label"]))
+    # Community-Benennung in den Embedding-Text ziehen (R11-2): der Knoten trägt sie als
+    # community_name; ältere Graphen nur als community-ID -> über .graphify_labels.json
+    # auflösen. Vorher wurde community_label geprüft — das ist in own-Graphen IMMER leer,
+    # weshalb der thematische Bezug (z. B. „Framework") beim Ranking fehlte.
+    cname = n.get("community_name") or n.get("community_label")
+    if not cname and labels and n.get("community") is not None:
+        cname = labels.get(str(n.get("community")))
+    if cname:
+        parts.append(str(cname))
     if n.get("rationale"):
         parts.append(str(n["rationale"])[:600])
     if n.get("source_file"):
@@ -109,7 +125,8 @@ def build_index(project_dir: Path) -> int:
     nodes = g.get("nodes", [])
     if not nodes:
         return 0
-    vecs = np.array(list(_get_model().embed([_node_text(n) for n in nodes])), dtype=np.float32)
+    labels = _load_labels(project_dir)
+    vecs = np.array(list(_get_model().embed([_node_text(n, labels) for n in nodes])), dtype=np.float32)
     vecs /= np.linalg.norm(vecs, axis=1, keepdims=True) + 1e-9
     ids = np.array([n.get("id") or n.get("label") for n in nodes], dtype=object)
     np.savez_compressed(project_dir / "graphify-out" / INDEX_NAME, vecs=vecs, ids=ids)

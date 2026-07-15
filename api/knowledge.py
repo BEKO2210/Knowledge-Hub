@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, Response
 
 import config
 import graph_context
@@ -20,24 +20,91 @@ import vault
 from api.common import DATA_DIR, GRAPHIFY_BIN, KNOWLEDGE_ROOT, _projects, json_object
 from api.i18n import T
 
+# graph.json wird bei jedem Aufruf von projects()/graph() gelesen und geparst. Ein
+# großer Graph (20 k Knoten ≈ 20 MB) kostet ~140 ms Parse — synchron in der Event-Loop,
+# also fror der ganze Server bei jeder Graph-Ansicht kurz ein und unter Last (viele
+# gleichzeitige Leser) sekundenlang (R24-1). Die Datei ändert sich nur beim Rebuild,
+# deshalb: geparsten Graphen UND fertige Antwort je nach mtime zwischenspeichern.
+_parsed_cache: dict[str, tuple[float, dict | None]] = {}
+_payload_cache: dict[tuple[str, int], tuple[float, bytes]] = {}
+_CACHE_MAX = 12
+
+
+def _graph_mtime(name: str) -> float | None:
+    try:
+        return (KNOWLEDGE_ROOT / name / "graphify-out" / "graph.json").stat().st_mtime
+    except OSError:
+        return None
+
 
 def _read_graph(name: str) -> dict | None:
-    """graph.json eines Projekts lesen. Gibt None zurück, wenn die Datei fehlt oder
-    beschädigt ist (halb geschrieben, kein JSON) — statt einen rohen JSONDecodeError
-    bis in einen 500-Traceback durchschlagen zu lassen. Ein kaputter Graph eines
-    Projekts darf weder die Projektübersicht noch die Graph-Ansicht abreißen."""
-    f = KNOWLEDGE_ROOT / name / "graphify-out" / "graph.json"
-    try:
-        g = json.loads(f.read_text())
-    except (OSError, json.JSONDecodeError):
+    """graph.json eines Projekts lesen (mtime-gecacht). Gibt None zurück, wenn die
+    Datei fehlt oder beschädigt ist (halb geschrieben, kein JSON) — statt einen rohen
+    JSONDecodeError bis in einen 500-Traceback durchschlagen zu lassen. Ein kaputter
+    Graph eines Projekts darf weder die Projektübersicht noch die Graph-Ansicht abreißen."""
+    mtime = _graph_mtime(name)
+    if mtime is None:
+        _parsed_cache.pop(name, None)
         return None
-    return g if isinstance(g, dict) else None
+    hit = _parsed_cache.get(name)
+    if hit and hit[0] == mtime:
+        return hit[1]
+    try:
+        g = json.loads((KNOWLEDGE_ROOT / name / "graphify-out" / "graph.json").read_text())
+    except (OSError, json.JSONDecodeError):
+        g = None
+    g = g if isinstance(g, dict) else None
+    if len(_parsed_cache) >= _CACHE_MAX:
+        _parsed_cache.clear()
+    _parsed_cache[name] = (mtime, g)
+    return g
 
 
-async def projects(request: Request) -> JSONResponse:
+def _build_graph_payload(name: str, limit: int) -> bytes | None:
+    """Der CPU-Kern der Graph-Ansicht: parsen, nach Grad ranken, deckeln, zu Antwort
+    formen UND serialisieren. Gibt fertige JSON-Bytes zurück, damit auch die
+    Serialisierung (≈1,6 MB bei großen Graphen) aus der Event-Loop ausgelagert und
+    danach als Bytes gecacht wird — ein Cache-Hit serialisiert dann nichts mehr.
+    Bewusst eine reine Funktion (via asyncio.to_thread aufrufbar)."""
+    g = _read_graph(name)
+    if g is None:
+        return None
+    nodes = g.get("nodes", [])
+    links = g.get("links", g.get("edges", []))
+    degree: dict[str, int] = {}
+    for link in links:
+        degree[link["source"]] = degree.get(link["source"], 0) + 1
+        degree[link["target"]] = degree.get(link["target"], 0) + 1
+    ranked = sorted(nodes, key=lambda n: degree.get(n["id"], 0), reverse=True)
+    keep_nodes = ranked if limit <= 0 else ranked[:limit]  # limit<=0 = alle Knoten, kein Deckel
+    keep_ids = {n["id"] for n in keep_nodes}
+    out_nodes = [
+        {
+            "id": n["id"],
+            "label": n.get("label", n["id"]),
+            "community": n.get("community"),
+            "community_name": n.get("community_name"),
+            "file": n.get("source_file"),
+            "rationale": (n.get("rationale") or "")[:4000],
+            "source_url": n.get("source_url") if n.get("source_url") not in (None, "None") else "",
+            "degree": degree.get(n["id"], 0),
+        }
+        for n in keep_nodes
+    ]
+    out_links = [
+        {"source": link["source"], "target": link["target"], "relation": link.get("relation", "")}
+        for link in links
+        if link["source"] in keep_ids and link["target"] in keep_ids
+    ]
+    return json.dumps(
+        {"nodes": out_nodes, "links": out_links, "total_nodes": len(nodes), "total_links": len(links)}
+    ).encode()
+
+
+def _build_projects() -> list[dict]:
     out = []
     for name in _projects():
-        g = _read_graph(name)
+        g = _read_graph(name)  # mtime-gecacht
         if g is None:
             out.append(
                 {"project": name, "nodes": 0, "edges": 0, "communities": 0, "error": T("Graph nicht lesbar")}
@@ -52,6 +119,13 @@ async def projects(request: Request) -> JSONResponse:
                 "communities": len({n.get("community") for n in nodes if n.get("community") is not None}),
             }
         )
+    return out
+
+
+async def projects(request: Request) -> JSONResponse:
+    # Über einen Thread: das Parsen mehrerer (ggf. großer) Graphen darf die Event-Loop
+    # nicht blockieren. Nach dem ersten Aufruf liefern die mtime-Caches nahezu kostenlos.
+    out = await asyncio.to_thread(_build_projects)
     return JSONResponse(out)
 
 
@@ -65,49 +139,28 @@ async def graph(request: Request) -> JSONResponse:
         limit = int(request.query_params.get("limit", 2000))
     except (TypeError, ValueError):
         limit = 2000
-    g = _read_graph(name)
-    if g is None:
+
+    # Fertige Antwort je nach graph.json-mtime aus dem Cache — so zahlt nur der erste
+    # Aufruf nach einem Rebuild die Parse-/Rank-Kosten, nicht jeder Leser (R24-1).
+    mtime = _graph_mtime(name)
+    ck = (name, limit)
+    hit = _payload_cache.get(ck)
+    if hit and mtime is not None and hit[0] == mtime:
+        return Response(hit[1], media_type="application/json")
+
+    # Cache-Miss: die CPU-Arbeit (Parse + Rank + Serialisierung) in einen Thread
+    # auslagern, damit ein großer Graph die Event-Loop nicht sekundenlang blockiert.
+    body = await asyncio.to_thread(_build_graph_payload, name, limit)
+    if body is None:
         # Kaputte/fehlende graph.json: leeren Graphen mit Hinweis liefern statt 500.
         return JSONResponse(
             {"nodes": [], "links": [], "total_nodes": 0, "total_links": 0, "error": T("Graph nicht lesbar")}
         )
-    nodes = g.get("nodes", [])
-    links = g.get("links", g.get("edges", []))
-
-    degree: dict[str, int] = {}
-    for link in links:
-        degree[link["source"]] = degree.get(link["source"], 0) + 1
-        degree[link["target"]] = degree.get(link["target"], 0) + 1
-
-    ranked = sorted(nodes, key=lambda n: degree.get(n["id"], 0), reverse=True)
-    keep_nodes = ranked if limit <= 0 else ranked[:limit]  # limit<=0 = alle Knoten, kein Deckel
-    keep_ids = {n["id"] for n in keep_nodes}
-    out_nodes = [
-        {
-            "id": n["id"],
-            "label": n.get("label", n["id"]),
-            "community": n.get("community"),
-            # Der von der KI vergebene Bereichsname. Ohne ihn zeigt die Oberfläche
-            # nur „Bereich 7" — die Benennung wäre unsichtbar und damit sinnlos.
-            "community_name": n.get("community_name"),
-            "file": n.get("source_file"),
-            # The node's own content, so the UI can show it when a node is
-            # clicked. graphify keeps this as `rationale`; without it the panel
-            # could only show metadata, never what the node actually says.
-            "rationale": (n.get("rationale") or "")[:4000],
-            "source_url": n.get("source_url") if n.get("source_url") not in (None, "None") else "",
-            "degree": degree.get(n["id"], 0),
-        }
-        for n in keep_nodes
-    ]
-    out_links = [
-        {"source": link["source"], "target": link["target"], "relation": link.get("relation", "")}
-        for link in links
-        if link["source"] in keep_ids and link["target"] in keep_ids
-    ]
-    return JSONResponse(
-        {"nodes": out_nodes, "links": out_links, "total_nodes": len(nodes), "total_links": len(links)}
-    )
+    if mtime is not None:
+        if len(_payload_cache) >= _CACHE_MAX:
+            _payload_cache.clear()
+        _payload_cache[ck] = (mtime, body)
+    return Response(body, media_type="application/json")
 
 
 async def report(request: Request) -> JSONResponse:
