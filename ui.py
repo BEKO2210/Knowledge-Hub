@@ -96,6 +96,22 @@ async def _on_beschaedigt(request: Request, exc: Exception) -> JSONResponse:
     )
 
 
+async def _on_config_kaputt(request: Request, exc: Exception) -> JSONResponse:
+    """Beschädigte config.yaml — eindeutige Meldung statt generischem 500-Traceback."""
+    ref = _rnd.token_hex(4)
+    _log_error(ref, request, exc)
+    return JSONResponse(
+        {
+            "error": T(
+                "Die Konfiguration (config.yaml) ist beschädigt. Bitte prüfen oder aus einer "
+                "Sicherung einspielen."
+            ),
+            "ref": ref,
+        },
+        status_code=500,
+    )
+
+
 async def _on_nicht_gefunden(request: Request, exc: Exception) -> JSONResponse:
     if request.url.path.startswith("/ui/api/"):
         return JSONResponse({"error": T("Diesen Endpunkt gibt es nicht.")}, status_code=404)
@@ -359,6 +375,7 @@ ui_app = Starlette(
         BadJSON: _on_kein_objekt,
         vault.VaultCorrupt: _on_beschaedigt,
         vault.VaultLocked: _on_gesperrt,
+        config.ConfigError: _on_config_kaputt,
         404: _on_nicht_gefunden,
         Exception: _on_unerwartet,
     },

@@ -52,11 +52,18 @@ def _call_openai(base_url: str, key: str, model: str, system: str, user: str, li
     dann = "max_tokens" if erst == "max_completion_tokens" else "max_completion_tokens"
 
     for versuch, limit_key in enumerate((erst, dann)):
-        req = urllib.request.Request(url, data=_openai_body(model, system, user, limit_key, limit), headers=kopf)
+        req = urllib.request.Request(
+            url, data=_openai_body(model, system, user, limit_key, limit), headers=kopf
+        )
         try:
             with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
                 data = json.load(r)
             break
+        except json.JSONDecodeError as e:
+            # 200, aber der Body ist kein JSON (Proxy-HTML-Fehlerseite, leere Antwort,
+            # abgeschnitten). Kein Retry — sauber als LLMError melden statt einen rohen
+            # JSONDecodeError bis in einen 500-Traceback durchschlagen zu lassen.
+            raise LLMError("Anbieter lieferte keine gültige JSON-Antwort.") from e
         except urllib.error.HTTPError as e:
             detail = e.read().decode(errors="replace")[:300]
             # Genau dieser Fehler ist heilbar: der Anbieter will den anderen Namen.
@@ -71,7 +78,9 @@ def _call_openai(base_url: str, key: str, model: str, system: str, user: str, li
 
     try:
         return data["choices"][0]["message"]["content"].strip()
-    except (KeyError, IndexError) as e:
+    except (KeyError, IndexError, TypeError) as e:
+        # TypeError: der Body war gültiges JSON, aber kein Objekt (Liste/String/Zahl) —
+        # dann sind data["choices"] & Co. nicht indexierbar.
         raise LLMError("Unerwartete Antwort des Anbieters") from e
 
 

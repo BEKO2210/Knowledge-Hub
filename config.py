@@ -32,6 +32,16 @@ CONFIG_PATH = Path(
     os.environ.get("KNOWLEDGE_CONFIG", str(Path.home() / ".config" / "knowledge-mcp" / "config.yaml"))
 )
 
+
+class ConfigError(RuntimeError):
+    """config.yaml ist beschädigt (kein gültiges YAML oder kein Objekt).
+
+    Bewusst ein klarer, eigener Fehler statt eines rohen YAMLError/AttributeError:
+    eine kaputte Config soll eine eindeutige Meldung ergeben (und den Deploy-Health-Gate
+    auslösen), nicht einen 500-Traceback — und NICHT still auf die Defaults zurückfallen,
+    was Projekte/Backends unbemerkt verschlucken würde."""
+
+
 DEFAULTS: dict = {
     "server": {
         "host": "127.0.0.1",
@@ -78,7 +88,12 @@ def _deep_merge(base: dict, override: dict) -> dict:
 def load() -> dict:
     data = {}
     if CONFIG_PATH.exists():
-        data = yaml.safe_load(CONFIG_PATH.read_text()) or {}
+        try:
+            data = yaml.safe_load(CONFIG_PATH.read_text()) or {}
+        except yaml.YAMLError as e:
+            raise ConfigError(f"config.yaml ist kein gültiges YAML: {str(e).splitlines()[0]}") from e
+        if not isinstance(data, dict):
+            raise ConfigError("config.yaml muss ein YAML-Objekt sein (kein Liste/Wert an oberster Stelle).")
     return _deep_merge(DEFAULTS, data)
 
 

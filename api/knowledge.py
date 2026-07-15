@@ -21,10 +21,28 @@ from api.common import DATA_DIR, GRAPHIFY_BIN, KNOWLEDGE_ROOT, _projects, json_o
 from api.i18n import T
 
 
+def _read_graph(name: str) -> dict | None:
+    """graph.json eines Projekts lesen. Gibt None zurück, wenn die Datei fehlt oder
+    beschädigt ist (halb geschrieben, kein JSON) — statt einen rohen JSONDecodeError
+    bis in einen 500-Traceback durchschlagen zu lassen. Ein kaputter Graph eines
+    Projekts darf weder die Projektübersicht noch die Graph-Ansicht abreißen."""
+    f = KNOWLEDGE_ROOT / name / "graphify-out" / "graph.json"
+    try:
+        g = json.loads(f.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    return g if isinstance(g, dict) else None
+
+
 async def projects(request: Request) -> JSONResponse:
     out = []
     for name in _projects():
-        g = json.loads((KNOWLEDGE_ROOT / name / "graphify-out" / "graph.json").read_text())
+        g = _read_graph(name)
+        if g is None:
+            out.append(
+                {"project": name, "nodes": 0, "edges": 0, "communities": 0, "error": T("Graph nicht lesbar")}
+            )
+            continue
         nodes = g.get("nodes", [])
         out.append(
             {
@@ -47,7 +65,12 @@ async def graph(request: Request) -> JSONResponse:
         limit = int(request.query_params.get("limit", 2000))
     except (TypeError, ValueError):
         limit = 2000
-    g = json.loads((KNOWLEDGE_ROOT / name / "graphify-out" / "graph.json").read_text())
+    g = _read_graph(name)
+    if g is None:
+        # Kaputte/fehlende graph.json: leeren Graphen mit Hinweis liefern statt 500.
+        return JSONResponse(
+            {"nodes": [], "links": [], "total_nodes": 0, "total_links": 0, "error": T("Graph nicht lesbar")}
+        )
     nodes = g.get("nodes", [])
     links = g.get("links", g.get("edges", []))
 
@@ -309,13 +332,19 @@ async def graph_ask(request: Request) -> JSONResponse:
             try:
                 raw = semantic.query(KNOWLEDGE_ROOT / name, q, budget=1500)
             except Exception:
-                raw = subprocess.run(  # noqa: S603 - fester Binary, geprüftes Projekt
-                    [GRAPHIFY_BIN, "query", q, "--budget", "1500"],
-                    cwd=KNOWLEDGE_ROOT / name,
-                    capture_output=True,
-                    text=True,
-                    timeout=60,
-                ).stdout.strip()
+                # Letzte Stufe: graphify-CLI. Fehlt sie (FileNotFoundError) oder hängt
+                # sie (TimeoutExpired), NICHT bis in einen 500-Traceback durchschlagen —
+                # dann gilt „nichts gefunden" und die UI zeigt den Hinweis.
+                try:
+                    raw = subprocess.run(  # noqa: S603 - fester Binary, geprüftes Projekt
+                        [GRAPHIFY_BIN, "query", q, "--budget", "1500"],
+                        cwd=KNOWLEDGE_ROOT / name,
+                        capture_output=True,
+                        text=True,
+                        timeout=60,
+                    ).stdout.strip()
+                except Exception:
+                    raw = ""
         return graph_context.anreichern(KNOWLEDGE_ROOT / name, raw)
 
     cfg = config.load()
