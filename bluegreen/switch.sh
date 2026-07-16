@@ -57,6 +57,25 @@ set_target() { # set_target <port> — Drop-in atomar ersetzen + Proxy neu start
   systemctl --user restart "$BG_ENTRY_UNIT"
 }
 
+# Slot-Unit-Namen (Prod: kmcp-blue/green; Testinstanz kann BG_SLOT_UNIT_PREFIX setzen)
+SLOT_UNIT_PREFIX="${BG_SLOT_UNIT_PREFIX:-kmcp-}"
+slot_unit() { printf '%s%s.service' "$SLOT_UNIT_PREFIX" "$1"; }
+
+persist_autostart() { # persist_autostart <aktiver-slot> — Auto-Start dem aktiven Slot nachführen
+  # Der Entry-Proxy zeigt persistent (Drop-in) auf den aktiven Slot. Damit ein Reboot
+  # NICHT den falschen/keinen Slot hochbringt (Proxy -> toter Port = Hub extern down),
+  # muss genau der aktive Slot enabled sein und der andere disabled. enable/disable ist
+  # idempotent und ändert den LAUFZUSTAND nicht — nur das Boot-Verhalten. Ein Fehlschlag
+  # ist kein Switch-Abbruch, nur ein Persistenz-Hinweis (Single-Writer bleibt zur Laufzeit
+  # ohnehin durch den Proxy gewahrt).
+  local aktiv="$1" ander
+  ander=$([ "$aktiv" = blue ] && echo green || echo blue)
+  systemctl --user enable "$(slot_unit "$aktiv")" >/dev/null 2>&1 \
+    || log "WARN: $(slot_unit "$aktiv") ließ sich nicht enablen — Auto-Start nach Reboot prüfen."
+  systemctl --user disable "$(slot_unit "$ander")" >/dev/null 2>&1 \
+    || log "WARN: $(slot_unit "$ander") ließ sich nicht disablen — Auto-Start nach Reboot prüfen."
+}
+
 state_get() { # state_get <feld> <default>
   python3 -c "
 import json, os
@@ -181,7 +200,8 @@ fallback() { # fallback <grund>
   # Rollback-Health-Check: der wiederhergestellte Slot muss selbst bereit sein
   if probe "$ALT_PORT" && curl -sf -m 5 "http://127.0.0.1:$BG_ENTRY_PORT$PROBE_PATH" >/dev/null; then
     state_update "{'active_slot': '$AKTIV', 'last_fallback_at': now, 'fallback_count': s['fallback_count'] + 1, 'blocked_releases': sorted(set(s['blocked_releases']) | {'$ZIEL_RELEASE'})}"
-    log "Rückschaltung auf $AKTIV erfolgreich; Release $ZIEL_RELEASE ist jetzt blockiert."
+    persist_autostart "$AKTIV"
+    log "Rückschaltung auf $AKTIV erfolgreich; Release $ZIEL_RELEASE ist jetzt blockiert (Auto-Start folgt $AKTIV)."
   else
     # Beide ungesund: EIN Versuch wurde gemacht — kein Loop, klarer Notfallzustand.
     write_incident critical "Beide Slots ungesund: $ZIEL fiel im Fenster aus, $AKTIV besteht den Health-Check nach Rückschaltung nicht." >/dev/null
@@ -212,4 +232,5 @@ AKTIV_RELEASE="unbekannt"
 AKTIV_MANIFEST="$BG_RELEASES_DIR/$AKTIV/release-manifest.json"
 [ -f "$AKTIV_MANIFEST" ] && AKTIV_RELEASE=$(python3 -c "import json;print(json.load(open('$AKTIV_MANIFEST'))['release_id'])")
 state_update "{'active_slot': '$ZIEL', 'previous_slot': '$AKTIV', 'active_release': '$ZIEL_RELEASE', 'previous_release': '$AKTIV_RELEASE', 'last_switch_at': now, 'switch_count': s['switch_count'] + 1, 'emergency': False}"
-log "slot-state.json aktualisiert (aktiv: $ZIEL, vorher: $AKTIV)."
+persist_autostart "$ZIEL"
+log "slot-state.json aktualisiert (aktiv: $ZIEL, vorher: $AKTIV; Auto-Start folgt $ZIEL)."
