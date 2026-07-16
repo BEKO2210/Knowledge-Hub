@@ -566,44 +566,53 @@ def _git_purge_commit(name: str) -> None:
         pass  # Repo-Sync darf das Entfernen nie blockieren
 
 
-def _purge_graph_data(project_dir: Path) -> list[str]:
-    """Löscht ALLE Graph-Artefakte eines Projekts: Hub-Kopie, lokales graphify-out, Antworten.
+def _purge_graph_data(project_dir: Path) -> tuple[list[str], list[str]]:
+    """Löscht ALLE Graph-Artefakte eines Projekts: Hub-Kopie, lokales graphify-out,
+    Antworten, Chunk-Index. Der Projektordner selbst (Quellcode, Notizen) bleibt.
 
-    Der Projektordner selbst (Quellcode, Notizen) bleibt unangetastet.
+    Jede Löschung ist best-effort: Was sich nicht entfernen lässt — etwa
+    /opt/lumo/graphify-out, dessen Elternordner root gehört (belkis hat dort kein
+    Schreibrecht) — landet in ``skipped`` und blockiert die restliche Bereinigung
+    NICHT. So bleibt kein Projekt jemals „halb gelöscht" in der Mapping-Liste
+    hängen, nur weil ein einzelner Ordner nicht entfernbar war.
+
+    Rückgabe: (removed, skipped).
     """
     removed: list[str] = []
+    skipped: list[str] = []
     name = project_dir.name.lower()
     if not name or name in RESERVED_GRAPH_DIRS:
-        return removed
+        return removed, skipped
+
+    def purge(path: Path, *, on_success=None) -> None:
+        if path.is_symlink() or not path.is_dir():
+            return
+        try:
+            shutil.rmtree(path)
+        except OSError as exc:  # PermissionError, Verzeichnis in Benutzung, …
+            skipped.append(f"{path}: {exc.strerror or exc}")
+            return
+        removed.append(str(path))
+        if on_success is not None:
+            on_success()
 
     # 1) Hub-Kopie im Wissens-Repo — das, was MCP-Tools und der Graphen-Tab servieren
     hub_copy = KNOWLEDGE_ROOT / name
     if hub_copy.is_dir() and hub_copy.resolve().parent == KNOWLEDGE_ROOT.resolve():
-        shutil.rmtree(hub_copy)
-        removed.append(str(hub_copy))
-        _git_purge_commit(name)
+        purge(hub_copy, on_success=lambda: _git_purge_commit(name))
 
     # 2) Lokale Graph-Daten im Projektordner
-    local_out = project_dir / "graphify-out"
-    if local_out.is_dir() and not local_out.is_symlink():
-        shutil.rmtree(local_out)
-        removed.append(str(local_out))
+    purge(project_dir / "graphify-out")
 
     # 3) Gespeicherte Antworten zu diesem Projekt
-    answers = DATA_DIR / "answers" / name
-    if answers.is_dir():
-        shutil.rmtree(answers)
-        removed.append(str(answers))
+    purge(DATA_DIR / "answers" / name)
 
     # 4) Chunk-Index (semantische Datei-Auszüge) — lag bisher außerhalb der Kaskade
     import semantic
 
-    chunks = semantic.CHUNK_DIR / name
-    if chunks.is_dir():
-        shutil.rmtree(chunks)
-        removed.append(str(chunks))
+    purge(semantic.CHUNK_DIR / name)
 
-    return removed
+    return removed, skipped
 
 
 # --- Graph-Bestand: Registrierung ist die Quelle der Wahrheit (Post-Run-40, Bug 2) ----
@@ -744,7 +753,7 @@ async def mapping_project_update(request: Request) -> JSONResponse:
     action = str(body.get("action", ""))
     entries = config.project_entries()
     resolved = str(Path(target).expanduser())
-    kept, found, purged = [], False, []
+    kept, found, purged, skipped = [], False, [], []
     for e in entries:
         if str(Path(e["path"]).expanduser()) == resolved:
             found = True
@@ -755,7 +764,7 @@ async def mapping_project_update(request: Request) -> JSONResponse:
 
                 try:
                     with locks.project_lock(Path(e["path"]).name, timeout=5):
-                        purged = _purge_graph_data(Path(e["path"]).expanduser())
+                        purged, skipped = _purge_graph_data(Path(e["path"]).expanduser())
                 except locks.LockedError:
                     return JSONResponse(
                         {"error": T("Projekt wird gerade gebaut — bitte warten und erneut entfernen")},
@@ -770,8 +779,11 @@ async def mapping_project_update(request: Request) -> JSONResponse:
     config.save_projects(kept)
     vault.audit(f"PROJECT-{action.upper()}", target, client="web-ui")
     if action == "remove":
-        vault.audit("GRAPH-PURGE", "; ".join(purged) or "keine Graph-Daten vorhanden", client="web-ui")
-    return JSONResponse({"ok": True, "purged": purged})
+        detail = "; ".join(purged) or "keine Graph-Daten vorhanden"
+        if skipped:
+            detail += " | nicht löschbar: " + "; ".join(skipped)
+        vault.audit("GRAPH-PURGE", detail, client="web-ui")
+    return JSONResponse({"ok": True, "purged": purged, "skipped": skipped})
 
 
 def _diagnose_project(p: Path) -> list[dict]:

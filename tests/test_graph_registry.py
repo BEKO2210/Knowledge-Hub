@@ -152,3 +152,37 @@ def test_gleichstand_zwischen_mcp_api_und_dateisystem(client, auth, fresh_vault)
     assert mcp_sicht["b"].get("archived") is True
     ui = client.get("/ui/api/mapping/graphs", headers=auth).json()
     assert [g["name"] for g in ui["archived"]] == ["b"] and ui["unregistered"] == []
+
+
+def test_entfernen_bleibt_robust_wenn_lokale_daten_nicht_loeschbar_sind(client, auth, fresh_vault):
+    """Regression zum /opt/lumo-Fall (Hub-Fehler „etwas schiefgelaufen").
+
+    Lässt sich das lokale graphify-out nicht löschen — bei /opt/lumo gehört der
+    Elternordner root, belkis hat dort kein Schreibrecht — darf die Entfernung
+    NICHT abbrechen. Sonst bliebe der Registry-Eintrag hängen und das Projekt
+    stünde für immer im Mapping-Tab. Der unlöschbare Ordner wird ehrlich als
+    ``skipped`` gemeldet, die Registry wird trotzdem sauber.
+    """
+    import os
+    from pathlib import Path
+
+    _hub_graph("gast")
+    src = _quelle("gast")
+    local_out = Path(src) / "graphify-out"
+    local_out.mkdir(parents=True, exist_ok=True)
+    (local_out / "graph.json").write_text("{}")
+    config.save_projects([{"path": src, "enabled": False}])
+    os.chmod(src, 0o555)  # Elternordner schreibgeschützt -> rmdir(graphify-out) scheitert wie bei /opt/lumo
+    try:
+        r = client.patch("/ui/api/mapping/projects", headers=auth, json={"path": src, "action": "remove"})
+        assert r.status_code == 200, r.text
+        body = r.json()
+        # Kern des Fixes: Registry ist sauber, kein „halb gelöschtes" Projekt mehr.
+        assert config.project_entries() == []
+        # Hub-Kopie ist weg; das nicht löschbare lokale Verzeichnis wird ehrlich gemeldet.
+        assert not (KNOWLEDGE / "gast").exists()
+        assert any("graphify-out" in s for s in body["skipped"]), body
+        assert local_out.exists(), "unlöschbarer Ordner bleibt bestehen — kein Crash, kein Datenverlust"
+        assert "GRAPH-PURGE" in (TMP / "audit.log").read_text()
+    finally:
+        os.chmod(src, 0o755)
