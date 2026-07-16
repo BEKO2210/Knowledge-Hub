@@ -152,3 +152,26 @@ def test_mcp_serverinfo_traegt_icon_und_adresse():
     assert all("/ui/static/" in i.src for i in icons), \
         "Das Icon muss unter einem Pfad liegen, der ohne Anmeldung erreichbar ist"
     assert server.mcp.website_url
+
+
+# --- offener Prefix darf NICHT zum Gate-Bypass werden (Verbinden-Kampagne C9) ---
+import pytest
+
+
+@pytest.mark.parametrize(
+    "pfad",
+    [
+        "/ui/asset/..%2fapi%2fsecrets",
+        "/ui/asset/..%2f..%2foauth_state.json",
+        "/ui/static/..%2f..%2fvault.enc",
+        "/ui/static/..%2fapi%2faudit",
+        "/oauth/..%2fui%2fapi%2fsecrets",
+    ],
+)
+def test_offener_prefix_erlaubt_keinen_unauth_zugriff(client, pfad):
+    """Die offenen Prefixe (/ui/asset, /ui/static, /oauth) dürfen per Pfad-Traversal
+    NICHT zu geschützten Endpunkten/Dateien führen. Bewusst OHNE Token: ein
+    unauthentifizierter Aufruf darf niemals 200 mit Nutzdaten sehen (Gate-Bypass)."""
+    r = client.get(pfad)  # kein Authorization-Header
+    assert r.status_code in (401, 404), f"{pfad} -> {r.status_code} (Gate-Bypass!)"
+    assert r.status_code != 200
