@@ -177,12 +177,14 @@ def _parse_json(raw: str) -> dict | None:
     return json.loads(re.sub(r",\s*([}\]])", r"\1", m.group(0)))  # tolerante Kommas
 
 
-def extract_file(ask, backend: dict, model: str, key: str, rel: str, text: str) -> dict | None:
+def extract_file(
+    ask, backend: dict, model: str, key: str, rel: str, text: str, usage: dict | None = None
+) -> dict | None:
     """Eine Datei durch das LLM — ein Retry, dann aufgeben (Datei wird übersprungen)."""
     user = f"Datei: {rel}\n\n{text[:MAX_CHARS]}"
     for attempt in (1, 2):
         try:
-            return _parse_json(ask(backend, model, key, SYSTEM_PROMPT, user, limit=3000))
+            return _parse_json(ask(backend, model, key, SYSTEM_PROMPT, user, limit=3000, usage=usage))
         except Exception as e:  # noqa: BLE001 - eine kaputte Datei stoppt nicht den Lauf
             if attempt == 2:
                 print(f"  WARN {rel}: {e}", file=sys.stderr)
@@ -288,6 +290,7 @@ def extract_project(
         cache = {}
 
     seen, changed = set(), 0
+    usage = {"in": 0, "out": 0, "calls": 0}
     for f in iter_files(root):
         rel = str(f.relative_to(root))
         seen.add(rel)
@@ -298,7 +301,7 @@ def extract_project(
         h = hashlib.sha256(text.encode()).hexdigest()
         if cache.get(rel, {}).get("hash") == h:
             continue  # unverändert → kein LLM-Aufruf
-        data = extract_file(ask, backend, model, key, rel, text)
+        data = extract_file(ask, backend, model, key, rel, text, usage=usage)
         if data is None:
             # Datei nicht extrahierbar: alter Stand bleibt, statt Wissen zu verlieren
             if rel in cache:
@@ -322,6 +325,7 @@ def extract_project(
         "changed": changed,
         "nodes": len(graph["nodes"]),
         "edges": len(graph["links"]),
+        "usage": usage,
     }
 
 
@@ -354,6 +358,17 @@ def main() -> int:
         f"[hub-extract] {root.name}: {stats['files']} Dateien, {stats['changed']} neu extrahiert, "
         f"{stats['nodes']} Knoten, {stats['edges']} Kanten in {time.time() - t0:.0f}s"
     )
+    # Kosten dieses Laufs verbuchen: Tokens × Modellpreis (aus config.yaml). Ohne diese
+    # Zeilen zählte die Mapping-Kostenanzeige den eigenen Extraktor als $0 (er löste
+    # graphify als Standard ab, das die est.-cost-Zeilen früher lieferte). Format bewusst
+    # so, dass der Log-Parser in api/mapping.py (est. cost … / tokens: … in / … out) greift.
+    u = stats.get("usage") or {}
+    tin, tout = int(u.get("in", 0)), int(u.get("out", 0))
+    price_in, price_out = config.model_price(model, cfg)
+    cost = tin / 1_000_000 * price_in + tout / 1_000_000 * price_out
+    label = model.replace(":", "-")  # Doppelpunkt (z. B. ollama-Tags) bräche den Parser
+    print(f"[hub-extract] {root.name}: tokens: {tin:,} in / {tout:,} out")
+    print(f"[hub-extract] {root.name}: est. cost {label}: ${cost:.4f}")
     return 0
 
 

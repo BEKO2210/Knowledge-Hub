@@ -19,6 +19,7 @@ from __future__ import annotations
 import copy
 import fcntl
 import os
+import re
 import sys
 import tempfile
 import time
@@ -255,6 +256,25 @@ def save_archived_graphs(entries: list[dict]) -> None:
 
 def backends(cfg: dict | None = None) -> dict:
     return (cfg or load())["mapping"].get("backends", {})
+
+
+_PRICE_RE = re.compile(r"\$([0-9.]+)\s*/\s*\$([0-9.]+)")
+
+
+def model_price(model: str, cfg: dict | None = None) -> tuple[float, float]:
+    """(Input, Output)-Preis pro 1 Mio. Tokens in USD für ein Modell.
+
+    Einzige Quelle ist der `hint` in config.yaml (z. B. „empfohlen · $0.40/$1.60"),
+    damit der Preis dort bleibt, wo er ohnehin gepflegt wird — keine zweite Tabelle,
+    die auseinanderläuft. Unbekanntes oder kostenloses Modell (Ollama) → (0.0, 0.0).
+    """
+    cfg = cfg or load()
+    for b in backends(cfg).values():
+        for m in b.get("models", []):
+            if m.get("id") == model:
+                mt = _PRICE_RE.search(str(m.get("hint", "")))
+                return (float(mt.group(1)), float(mt.group(2))) if mt else (0.0, 0.0)
+    return 0.0, 0.0
 
 
 def active_backend(cfg: dict | None = None) -> tuple[str, dict]:
