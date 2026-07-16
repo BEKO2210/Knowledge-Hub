@@ -61,6 +61,18 @@ set_target() { # set_target <port> — Drop-in atomar ersetzen + Proxy neu start
 SLOT_UNIT_PREFIX="${BG_SLOT_UNIT_PREFIX:-kmcp-}"
 slot_unit() { printf '%s%s.service' "$SLOT_UNIT_PREFIX" "$1"; }
 
+stop_standby() { # stop_standby <standby-slot> — Single-Writer: nie beide Slots gleichzeitig online
+  # Erst NACH bestandenem Beobachtungsfenster bzw. erfolgreicher Rückschaltung rufen —
+  # während des Fensters muss der alte Slot für den Sofort-Fallback weiterlaufen.
+  # Folge: Ein späterer Switch braucht ein vorheriges `systemctl --user restart <slot>`
+  # des Ziels (der dokumentierte Deploy-Ablauf tut das ohnehin; die Ziel-Probe in
+  # Schritt 3 verweigert sonst sauber mit Exit 69).
+  local standby="$1"
+  systemctl --user stop "$(slot_unit "$standby")" >/dev/null 2>&1 \
+    && log "Standby-Slot $standby gestoppt (Single-Writer: nur der aktive Slot läuft)." \
+    || log "WARN: Standby-Slot $standby ließ sich nicht stoppen — läuft er noch, sind beide online!"
+}
+
 persist_autostart() { # persist_autostart <aktiver-slot> — Auto-Start dem aktiven Slot nachführen
   # Der Entry-Proxy zeigt persistent (Drop-in) auf den aktiven Slot. Damit ein Reboot
   # NICHT den falschen/keinen Slot hochbringt (Proxy -> toter Port = Hub extern down),
@@ -173,6 +185,17 @@ sys.exit(0 if '$ZIEL_RELEASE' in s.get('blocked_releases',[]) else 1)"; then
 fi
 
 # --- 3. Pre-Switch-Gate ---------------------------------------------------------
+# Standby ist laut Deployment-Vorgabe „gestoppt-warm" (Code+venv bereit, Prozess aus).
+# Damit `switch.sh <conf> <slot>` als Ein-Befehl-Rollback funktioniert, wird ein
+# gestoppter Ziel-Slot hier gestartet und seine Readiness abgewartet.
+if ! probe "$ZIEL_PORT" && ! systemctl --user is-active --quiet "$(slot_unit "$ZIEL")"; then
+  log "Ziel-Slot $ZIEL ist gestoppt-warm — starte $(slot_unit "$ZIEL") …"
+  systemctl --user start "$(slot_unit "$ZIEL")" 2>/dev/null || true
+  for _ in $(seq 1 30); do
+    probe "$ZIEL_PORT" && break
+    sleep 1
+  done
+fi
 log "Prüfe Ziel-Slot $ZIEL auf 127.0.0.1:$ZIEL_PORT$PROBE_PATH …"
 if ! probe "$ZIEL_PORT"; then
   log "FEHLER: Ziel-Slot $ZIEL ist nicht bereit — Umschaltung NICHT durchgeführt, $AKTIV bleibt aktiv."
@@ -201,6 +224,7 @@ fallback() { # fallback <grund>
   if probe "$ALT_PORT" && curl -sf -m 5 "http://127.0.0.1:$BG_ENTRY_PORT$PROBE_PATH" >/dev/null; then
     state_update "{'active_slot': '$AKTIV', 'last_fallback_at': now, 'fallback_count': s['fallback_count'] + 1, 'blocked_releases': sorted(set(s['blocked_releases']) | {'$ZIEL_RELEASE'})}"
     persist_autostart "$AKTIV"
+    stop_standby "$ZIEL"
     log "Rückschaltung auf $AKTIV erfolgreich; Release $ZIEL_RELEASE ist jetzt blockiert (Auto-Start folgt $AKTIV)."
   else
     # Beide ungesund: EIN Versuch wurde gemacht — kein Loop, klarer Notfallzustand.
@@ -233,4 +257,5 @@ AKTIV_MANIFEST="$BG_RELEASES_DIR/$AKTIV/release-manifest.json"
 [ -f "$AKTIV_MANIFEST" ] && AKTIV_RELEASE=$(python3 -c "import json;print(json.load(open('$AKTIV_MANIFEST'))['release_id'])")
 state_update "{'active_slot': '$ZIEL', 'previous_slot': '$AKTIV', 'active_release': '$ZIEL_RELEASE', 'previous_release': '$AKTIV_RELEASE', 'last_switch_at': now, 'switch_count': s['switch_count'] + 1, 'emergency': False}"
 persist_autostart "$ZIEL"
+stop_standby "$AKTIV"
 log "slot-state.json aktualisiert (aktiv: $ZIEL, vorher: $AKTIV; Auto-Start folgt $ZIEL)."
