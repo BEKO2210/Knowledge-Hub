@@ -444,7 +444,10 @@ async def health(request: Request) -> JSONResponse:
     bname, backend = config.active_backend(cfg)
     model = cfg["mapping"].get("model", "")
     secret = backend.get("secret")
-    stored = set(vault.secret_list(client="web-ui"))
+    # Interne Secrets (z. B. __2fa__) NICHT mitzählen — jede User-Oberfläche (UI-Liste,
+    # UI-Get/Delete, MCP) blendet HIDDEN_SECRETS aus; die Diagnose-/Übersichts-Zahl muss
+    # dieselbe „Wahrheit" zeigen, sonst steht dort 15 während die Liste 14 anzeigt (R13-1).
+    stored = set(vault.secret_list(client="web-ui")) - vault.HIDDEN_SECRETS
     has_key = bool(backend.get("local")) or (secret in stored if secret else False)
     checks.append(
         _check(
