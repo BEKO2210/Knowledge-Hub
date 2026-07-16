@@ -101,7 +101,7 @@
   <button id="langbtn" data-act="lang" aria-label="Sprache umschalten" title="Sprache / Language" data-en-title="Switch language">EN</button>
   <button id="themebtn" data-act="theme" aria-label="Design umschalten" title="Hell/Dunkel" data-en-title="Light / dark"><svg class="ic" viewBox="0 0 24 24"><use href="#i-moon"/></svg></button>
   <button id="helpbtn" data-act="tour" aria-label="Hilfe & Einführung" title="Hilfe & Einführung" data-en-title="Help &amp; tour"><svg class="ic" viewBox="0 0 24 24"><use href="#i-help"/></svg></button>
-  <button id="logoutbtn" data-act="logout" aria-label="Abmelden" data-en-title="Sign out"><svg class="ic" viewBox="0 0 24 24"><use href="#i-logout"/></svg><span data-en="Sign out">Abmelden</span></button>
+  <button id="refreshbtn" data-act="refresh" aria-label="Aktualisieren" title="Aktualisieren" data-en-title="Refresh"><svg class="ic" viewBox="0 0 24 24"><use href="#i-refresh"/></svg><span data-en="Refresh">Aktualisieren</span></button>
 </header>
 
 <main>
@@ -530,6 +530,13 @@
 4. Dateien zurückkopieren — der Befehl wird dir dabei angezeigt
 5. Dienst neu starten. Passwort, Secrets und Einstellungen sind wieder da.</pre>
         </details>
+      </div>
+
+      <div class="card" style="margin-top:var(--sp-3)">
+        <div style="display:flex;align-items:center;gap:8px;color:var(--mut);font-size:.85rem;margin-bottom:var(--sp-3)">
+          <svg class="ic" viewBox="0 0 24 24"><use href="#i-logout"/></svg><span data-en="Session">Sitzung</span></div>
+        <p style="color:var(--mut2);font-size:.8rem;line-height:1.55;margin:0 0 var(--sp-3)" data-en="Sign out of this browser. Your device tokens stay valid — manage them under Connect.">Aus diesem Browser abmelden. Deine Geräte-Token bleiben gültig — verwalten unter „Verbinden".</p>
+        <button class="btn ghost" data-act="logout"><svg class="ic" viewBox="0 0 24 24"><use href="#i-logout"/></svg><span data-en="Sign out">Abmelden</span></button>
       </div>
     </div>
   </div></section>

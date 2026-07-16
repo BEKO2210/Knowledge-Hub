@@ -120,6 +120,18 @@ def test_menue_reorg_karten_liegen_im_richtigen_panel():
         assert re.search(rf'data-act="moretab" data-arg="{arg}"', HTML), f"{arg} fehlt im Mehr-Menü"
 
 
+def test_refresh_im_kopf_logout_in_einstellungen():
+    """Nutzer-Wunsch: Abmelden liegt in den Einstellungen, an seiner alten Stelle im Kopf
+    sitzt ein Aktualisieren-Knopf. Beides muss genau einmal existieren und am richtigen Ort."""
+    kopf = re.search(r"<header.*?</header>", HTML, re.S).group(0)
+    assert 'id="refreshbtn"' in kopf and 'data-act="refresh"' in kopf, "Refresh-Knopf fehlt im Kopf"
+    assert 'data-act="logout"' not in kopf, "Abmelden darf nicht mehr im Kopf sein"
+    # Abmelden lebt jetzt im Einstellungen-Panel
+    assert 'data-act="logout"' in _panel("settings"), "Abmelden fehlt in den Einstellungen"
+    # genau ein Abmelden- und ein Refresh-Knopf im ganzen Markup
+    assert HTML.count('data-act="logout"') == 1 and HTML.count('data-act="refresh"') == 1
+
+
 # ---------------------------------------------------------------------------
 # Live-Abgleich gegen die laufende Oberfläche
 # ---------------------------------------------------------------------------
