@@ -88,6 +88,38 @@ def test_inventar_umfang_ist_stabil():
     assert len(AKTIONEN) >= 40 and len(FORMULARE) >= 10 and len(WECHSEL) >= 5
 
 
+def _panel(name: str) -> str:
+    """Inhalt eines <section id="tab-NAME"> … </section> (grobe, aber stabile Extraktion)."""
+    m = re.search(rf'id="tab-{name}"(.*?)</section>', HTML, re.S)
+    return m.group(1) if m else ""
+
+
+def test_menue_reorg_karten_liegen_im_richtigen_panel():
+    """Menü-Reorganisation (Option B): Projekte + Einstellungen sind eigene Panels, und die
+    verschobenen Karten liegen im NEUEN Panel und NICHT mehr im alten (Regressionsschutz —
+    ein Refactor darf die Bündelung nicht versehentlich rückgängig machen)."""
+    # Haupt-Navigation = genau diese vier Tabs
+    haupt = set(re.findall(r'data-tab="(\w+)"', HTML))
+    assert haupt == {"graph", "ask", "projekte", "mapping"}, f"Haupt-Tabs verschoben: {haupt}"
+    # Projekte-Panel trägt Projektliste + Graph-Bestand …
+    proj = _panel("projekte")
+    assert 'id="projlist"' in proj and 'id="graphstock"' in proj
+    # … und Mapping trägt sie NICHT mehr (aber weiter Kosten + Zeitplan)
+    mp = _panel("mapping")
+    assert 'id="projlist"' not in mp and 'id="graphstock"' not in mp
+    assert 'id="mapcosts"' in mp and 'data-form="mapping"' in mp
+    # Einstellungen-Panel bündelt 2FA + Vault + Backup …
+    st = _panel("settings")
+    assert 'id="twofabody"' in st and 'id="vaultbody"' in st and 'id="backupcard"' in st
+    # … und Diagnose trägt sie NICHT mehr (bleibt reine Statusanzeige)
+    he = _panel("health")
+    assert 'id="twofabody"' not in he and 'id="backupcard"' not in he
+    assert 'id="healthchecks"' in he
+    # Verbinden + Secrets sind über das Mehr-Menü erreichbar (nicht mehr Haupt-Tab)
+    for arg in ("secrets", "settings", "connect"):
+        assert re.search(rf'data-act="moretab" data-arg="{arg}"', HTML), f"{arg} fehlt im Mehr-Menü"
+
+
 # ---------------------------------------------------------------------------
 # Live-Abgleich gegen die laufende Oberfläche
 # ---------------------------------------------------------------------------
@@ -100,7 +132,18 @@ import uvicorn  # noqa: E402
 from conftest import TEST_PASSWORD  # noqa: E402
 from playwright.sync_api import sync_playwright  # noqa: E402
 
-ALLE_PANELS = ["graph", "ask", "secrets", "mapping", "connect", "health", "audit", "report"]
+ALLE_PANELS = [
+    "graph",
+    "ask",
+    "projekte",
+    "mapping",
+    "secrets",
+    "settings",
+    "connect",
+    "health",
+    "audit",
+    "report",
+]
 
 
 def _freier_port() -> int:

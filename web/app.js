@@ -560,20 +560,25 @@ function tab(name) {
   });
   $('tab-' + name).classList.add('on');
   /* Diagnose und Audit liegen hinter „Mehr“ — der Knopf zeigt an, dass man dort steht. */
+  // Tabs, die hinter „Mehr" liegen (nicht in der Haupt-/Bottom-Navigation) — beide
+  // Mehr-Knöpfe (Desktop + Handy) zeigen an, dass man in einem davon steht.
+  const MEHR_TABS = ['secrets', 'settings', 'connect', 'health', 'audit'];
   const nm = $('navmore');
-  if (nm) nm.classList.toggle('on', name === 'health' || name === 'audit');
+  if (nm) nm.classList.toggle('on', MEHR_TABS.includes(name));
   if (name !== 'report') history.replaceState(null, '', '#' + name);
   closeSide();
   if (name === 'secrets') loadSecrets();
   if (name === 'audit') loadAudit();
-  if (name === 'mapping') { loadMapping(); loadProjectsCard(); loadGraphStock(); }
-  if (name === 'health') { loadHealth(); loadTwoFA(); loadVault(); loadBackup(); }
+  if (name === 'projekte') { loadProjectsCard(); loadGraphStock(); }
+  if (name === 'mapping') loadMapping();
+  if (name === 'health') loadHealth();
+  if (name === 'settings') { loadTwoFA(); loadVault(); loadBackup(); }
   if (name === 'connect') loadConnect();
   if (name === 'graph') setTimeout(fgResize, 0);
   if (name === 'ask') loadAsk();
   // Handy: „Mehr"-Knopf hervorheben, wenn ein darin liegender Tab aktiv ist
   const more = $('morebtn');
-  if (more) more.classList.toggle('on', name === 'health' || name === 'audit' || name === 'connect');
+  if (more) more.classList.toggle('on', MEHR_TABS.includes(name));
 }
 function openMore() { $('moredlg').showModal(); }
 
@@ -942,7 +947,7 @@ async function loadHistory() {
         const btn = document.createElement('button');
         btn.className = 'btn ghost sm';
         btn.textContent = t('Prüfen & reparieren');
-        btn.onclick = () => { tab('mapping'); toast(t2('Öffne die Projektliste — dort „{p}“ reparieren.', {p: f.project})); loadProjectsCard(); };
+        btn.onclick = () => { tab('projekte'); toast(t2('Öffne die Projektliste — dort „{p}“ reparieren.', {p: f.project})); loadProjectsCard(); };
         line.appendChild(btn);
         box.appendChild(line);
       }
@@ -954,7 +959,7 @@ async function loadHistory() {
         const btn = document.createElement('button');
         btn.className = 'btn ghost sm';
         btn.textContent = t('Zur Sicherung');
-        btn.onclick = () => { tab('health'); setTimeout(() => $('backupcard')?.scrollIntoView({behavior: 'smooth', block: 'center'}), 300); };
+        btn.onclick = () => { tab('settings'); setTimeout(() => $('backupcard')?.scrollIntoView({behavior: 'smooth', block: 'center'}), 300); };
         line.appendChild(btn);
         box.appendChild(line);
       }

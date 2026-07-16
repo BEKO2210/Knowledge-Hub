@@ -66,7 +66,8 @@ def seite(browser, hub, fresh_vault):
     page.on("pageerror", lambda e: page.fehler.append(str(e)))
     page.on("requestfailed", lambda r: page.fehler.append(f"Request fehlgeschlagen: {r.url}"))
     page.add_init_script(
-        "try{localStorage.setItem('kmcp_toured','1');localStorage.setItem('kmcp_lang','de')}catch(e){}")
+        "try{localStorage.setItem('kmcp_toured','1');localStorage.setItem('kmcp_lang','de')}catch(e){}"
+    )
     page.goto(f"{hub}/ui", wait_until="networkidle")
     yield page
     ctx.close()
@@ -82,8 +83,7 @@ def _anmelden(page):
     page.fill("#pw", TEST_PASSWORD)
     page.click("#loginbtn")
     for _ in range(150):
-        weg = page.evaluate(
-            "() => getComputedStyle(document.getElementById('login')).display === 'none'")
+        weg = page.evaluate("() => getComputedStyle(document.getElementById('login')).display === 'none'")
         if weg:
             return
         page.wait_for_timeout(100)
@@ -131,6 +131,7 @@ def test_secret_anlegen_lesen_loeschen_im_browser(seite):
 
     # ... und ist wirklich verschlüsselt im Vault gelandet
     import vault
+
     assert vault.secret_get("e2e_key", client="test") == "e2e-geheim"
 
     # löschen — der Hub nutzt einen eigenen <dialog>, kein Browser-confirm
@@ -161,7 +162,8 @@ def test_kopfleiste_bricht_auf_keiner_breite(browser, hub, fresh_vault, breite, 
     ctx = browser.new_context(viewport={"width": breite, "height": 880}, locale="en-US")
     page = ctx.new_page()
     page.add_init_script(
-        "try{localStorage.setItem('kmcp_toured','1');localStorage.setItem('kmcp_lang','de')}catch(e){}")
+        "try{localStorage.setItem('kmcp_toured','1');localStorage.setItem('kmcp_lang','de')}catch(e){}"
+    )
     page.goto(f"{hub}/ui", wait_until="networkidle")
     page.fill("#pw", TEST_PASSWORD)
     page.click("#loginbtn")
@@ -171,8 +173,7 @@ def test_kopfleiste_bricht_auf_keiner_breite(browser, hub, fresh_vault, breite, 
     fenster = page.evaluate("window.innerWidth")
     assert doc_breite <= fenster, f"Horizontaler Überlauf bei {breite}px"
 
-    nav_sichtbar = page.evaluate(
-        "getComputedStyle(document.querySelector('nav.desktop')).display !== 'none'")
+    nav_sichtbar = page.evaluate("getComputedStyle(document.querySelector('nav.desktop')).display !== 'none'")
     assert nav_sichtbar is (modus == "desktop")
 
     # Der Abmelden-Knopf muss vollständig im Bild sein
@@ -215,7 +216,9 @@ def test_browsersprache_bestimmt_die_startsprache(browser, hub, fresh_vault, loc
     """
     ctx = browser.new_context(locale=locale)
     page = ctx.new_page()
-    page.add_init_script("try{localStorage.removeItem('kmcp_lang');localStorage.setItem('kmcp_toured','1')}catch(e){}")
+    page.add_init_script(
+        "try{localStorage.removeItem('kmcp_lang');localStorage.setItem('kmcp_toured','1')}catch(e){}"
+    )
     page.goto(f"{hub}/ui", wait_until="networkidle")
     page.wait_for_timeout(400)
     assert page.evaluate("LANG") == erwartet
@@ -280,12 +283,15 @@ def test_projekt_umschalten_meldet_fehler_und_springt_zurueck(seite, monkeypatch
     vorher_projekte = config.project_entries()
 
     _anmelden(seite)
-    seite.evaluate("tab('mapping')")
+    seite.evaluate("tab('projekte')")
     seite.wait_for_timeout(1200)
 
-    seite.evaluate("""(pfad) => api('/ui/api/mapping/projects', {method: 'POST',
+    seite.evaluate(
+        """(pfad) => api('/ui/api/mapping/projects', {method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({path: pfad})})""", str(TMP / "projekt-x"))
+        body: JSON.stringify({path: pfad})})""",
+        str(TMP / "projekt-x"),
+    )
     seite.wait_for_timeout(1000)
     seite.evaluate("loadProjectsCard()")
     seite.wait_for_selector("#projlist input[type=checkbox]", timeout=10000)
@@ -315,7 +321,7 @@ def test_zweifaktor_knopf_bleibt_nach_fehler_bedienbar(seite):
     """Vorher: Der Knopf wurde vor dem Aufruf deaktiviert und nie wieder aktiviert.
     Nach einem Fehler konnte man 2FA nur noch durch Neuladen der Seite einrichten."""
     _anmelden(seite)
-    seite.evaluate("tab('health')")
+    seite.evaluate("tab('settings')")
     # Auf das Element warten, nicht auf die Uhr — loadTwoFA() lädt asynchron.
     seite.wait_for_selector("#start2fa", timeout=15000)
 
@@ -378,7 +384,7 @@ def test_falsches_altes_vault_passwort_wirft_nicht_raus(seite):
     flog aus dem Hub, statt „Aktuelles Passwort stimmt nicht." zu lesen.
     """
     _anmelden(seite)
-    seite.evaluate("tab('health')")
+    seite.evaluate("tab('settings')")
     seite.wait_for_selector("#pwnew", timeout=15000)
 
     seite.fill("#pwold", "das-ist-nicht-mein-passwort")
@@ -387,10 +393,13 @@ def test_falsches_altes_vault_passwort_wirft_nicht_raus(seite):
     seite.wait_for_timeout(2500)
 
     # NICHT ausgeloggt
-    assert seite.evaluate(
-        "() => getComputedStyle(document.getElementById('login')).display === 'none'"
-    ), "Ein falsches altes Passwort darf den Nutzer nicht abmelden"
+    assert seite.evaluate("() => getComputedStyle(document.getElementById('login')).display === 'none'"), (
+        "Ein falsches altes Passwort darf den Nutzer nicht abmelden"
+    )
 
-    meldung = seite.inner_text("#toasts") + seite.inner_text("#pwmsg") if seite.locator("#pwmsg").count() \
+    meldung = (
+        seite.inner_text("#toasts") + seite.inner_text("#pwmsg")
+        if seite.locator("#pwmsg").count()
         else seite.inner_text("#toasts")
+    )
     assert "stimmt nicht" in meldung.lower() or "aktuelles passwort" in meldung.lower(), meldung

@@ -92,9 +92,8 @@
   <nav class="desktop" aria-label="Hauptnavigation" data-en-title="Main navigation">
     <button data-tab="graph" class="on" data-act="tab" data-arg="graph"><svg class="ic" viewBox="0 0 24 24"><use href="#i-graph"/></svg><span data-en="Graphs">Graphen</span></button>
     <button data-tab="ask" data-act="tab" data-arg="ask"><svg class="ic" viewBox="0 0 24 24"><use href="#i-spark"/></svg><span data-en="Ask">Fragen</span></button>
-    <button data-tab="secrets" data-act="tab" data-arg="secrets"><svg class="ic" viewBox="0 0 24 24"><use href="#i-key"/></svg><span data-en="Secrets">Secrets</span></button>
+    <button data-tab="projekte" data-act="tab" data-arg="projekte"><svg class="ic" viewBox="0 0 24 24"><use href="#i-graph"/></svg><span data-en="Projects">Projekte</span></button>
     <button data-tab="mapping" data-act="tab" data-arg="mapping"><svg class="ic" viewBox="0 0 24 24"><use href="#i-moon"/></svg><span data-en="Mapping">Mapping</span></button>
-    <button data-tab="connect" data-act="tab" data-arg="connect"><svg class="ic" viewBox="0 0 24 24"><use href="#i-link"/></svg><span data-en="Connect">Verbinden</span></button>
     <button id="navmore" data-act="more" aria-haspopup="dialog"><svg class="ic" viewBox="0 0 24 24"><use href="#i-more"/></svg><span data-en="More">Mehr</span></button>
   </nav>
   <button id="langbtn" data-act="lang" aria-label="Sprache umschalten" title="Sprache / Language" data-en-title="Switch language">EN</button>
@@ -253,6 +252,34 @@
   </div></section>
 
   <!-- MAPPING -->
+  <!-- PROJEKTE -->
+  <section class="tab" id="tab-projekte" aria-label="Projekte" data-en-title="Projects"><div class="pad">
+    <div style="max-width:44rem;margin:0 auto">
+      <div class="pagehead"><svg class="ic" width="22" height="22" viewBox="0 0 24 24"><use href="#i-graph"/></svg><h2 data-en="Projects">Projekte</h2></div>
+      <p class="pagesub" data-en="The projects the hub turns into knowledge graphs. Add a folder, exclude files via .graphifyignore, repair a project, and manage the graph inventory.">Die Projekte, aus denen der Hub Wissensgraphen baut. Ordner hinzufügen, Dateien per .graphifyignore ausschließen, ein Projekt reparieren und den Graph-Bestand verwalten.</p>
+
+      <div class="card" style="margin-bottom:var(--sp-3)">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:var(--sp-3);color:var(--mut);font-size:.85rem">
+          <svg class="ic" viewBox="0 0 24 24"><use href="#i-graph"/></svg><span data-en="Projects">Projekte</span>
+          <button class="btn ghost" style="margin-left:auto;min-height:38px;font-size:.82rem;padding:6px 12px" data-act="picker">
+            <svg class="ic" style="width:16px;height:16px" viewBox="0 0 24 24"><use href="#i-plus"/></svg><span data-en="Add">Hinzufügen</span></button>
+        </div>
+        <div id="projlist" style="display:flex;flex-direction:column;gap:var(--sp-2)"></div>
+      </div>
+
+      <div class="card" id="graphstockcard" style="margin-bottom:var(--sp-3);display:none">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:var(--sp-3);color:var(--mut);font-size:.85rem">
+          <svg class="ic" viewBox="0 0 24 24"><use href="#i-graph"/></svg><span data-en="Graph inventory">Graph-Bestand</span></div>
+        <p style="color:var(--mut2);font-size:.78rem;line-height:1.55;margin:0 0 var(--sp-3)" data-en="Every graph must belong to a registered project. Anything listed here needs a decision: register the source folder as a project, keep the graph as documented archive material, or remove it completely. Source folders are never touched.">
+          Jeder Graph gehört zu einem registrierten Projekt. Was hier steht, braucht eine Entscheidung:
+          Quellordner als Projekt registrieren, den Graphen als dokumentiertes Archiv behalten oder
+          vollständig entfernen. Quellordner werden dabei nie angefasst.</p>
+        <div id="graphstock" style="display:flex;flex-direction:column;gap:var(--sp-2)"></div>
+      </div>
+    </div>
+  </div></section>
+
+  <!-- MAPPING -->
   <section class="tab" id="tab-mapping" aria-label="Nacht-Mapping" data-en-title="Nightly mapping"><div class="pad">
     <div style="max-width:44rem;margin:0 auto">
       <div class="pagehead"><svg class="ic" width="22" height="22" viewBox="0 0 24 24"><use href="#i-moon"/></svg><h2 data-en="Nightly mapping">Nacht-Mapping</h2></div>
@@ -337,25 +364,6 @@
         <p id="backendnote" style="color:var(--mut2);font-size:.78rem;margin:var(--sp-3) 0 0;line-height:1.5"></p>
         <button class="btn" style="margin-top:var(--sp-3)" id="mapsave" data-en="Save">Speichern</button>
       </form>
-
-      <div class="card" style="margin-bottom:var(--sp-3)">
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:var(--sp-3);color:var(--mut);font-size:.85rem">
-          <svg class="ic" viewBox="0 0 24 24"><use href="#i-graph"/></svg><span data-en="Projects">Projekte</span>
-          <button class="btn ghost" style="margin-left:auto;min-height:38px;font-size:.82rem;padding:6px 12px" data-act="picker">
-            <svg class="ic" style="width:16px;height:16px" viewBox="0 0 24 24"><use href="#i-plus"/></svg><span data-en="Add">Hinzufügen</span></button>
-        </div>
-        <div id="projlist" style="display:flex;flex-direction:column;gap:var(--sp-2)"></div>
-      </div>
-
-      <div class="card" id="graphstockcard" style="margin-bottom:var(--sp-3);display:none">
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:var(--sp-3);color:var(--mut);font-size:.85rem">
-          <svg class="ic" viewBox="0 0 24 24"><use href="#i-graph"/></svg><span data-en="Graph inventory">Graph-Bestand</span></div>
-        <p style="color:var(--mut2);font-size:.78rem;line-height:1.55;margin:0 0 var(--sp-3)" data-en="Every graph must belong to a registered project. Anything listed here needs a decision: register the source folder as a project, keep the graph as documented archive material, or remove it completely. Source folders are never touched.">
-          Jeder Graph gehört zu einem registrierten Projekt. Was hier steht, braucht eine Entscheidung:
-          Quellordner als Projekt registrieren, den Graphen als dokumentiertes Archiv behalten oder
-          vollständig entfernen. Quellordner werden dabei nie angefasst.</p>
-        <div id="graphstock" style="display:flex;flex-direction:column;gap:var(--sp-2)"></div>
-      </div>
 
       <div class="card" style="margin-bottom:var(--sp-3)">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:var(--sp-3);color:var(--mut);font-size:.85rem">
@@ -469,6 +477,20 @@
         <div id="healthinfo" class="statgrid"></div>
       </div>
 
+      <div class="card" id="healtherrbox" style="margin-top:var(--sp-3);display:none">
+        <div style="display:flex;align-items:center;gap:8px;color:var(--red);font-size:.85rem;margin-bottom:var(--sp-3)">
+          <svg class="ic" viewBox="0 0 24 24"><use href="#i-alert"/></svg><span data-en="Recent errors from mapping runs">Letzte Fehler aus den Mapping-Läufen</span></div>
+        <pre id="healtherrs" style="margin:0;font-size:.76rem;line-height:1.6;color:var(--mut);white-space:pre-wrap;overflow-wrap:anywhere"></pre>
+      </div>
+    </div>
+  </div></section>
+
+  <!-- EINSTELLUNGEN -->
+  <section class="tab" id="tab-settings" aria-label="Einstellungen" data-en-title="Settings"><div class="pad">
+    <div style="max-width:44rem;margin:0 auto">
+      <div class="pagehead"><svg class="ic" width="22" height="22" viewBox="0 0 24 24"><use href="#i-lock"/></svg><h2 data-en="Settings">Einstellungen</h2></div>
+      <p class="pagesub" data-en="Security and admin for your hub: two-factor authentication, vault access, access password and encrypted backups.">Sicherheit und Verwaltung deines Hubs: Zwei-Faktor-Anmeldung, Vault-Zugang, Zugangspasswort und verschlüsselte Sicherungen.</p>
+
       <div class="card" style="margin-top:var(--sp-3)">
         <div style="display:flex;align-items:center;gap:8px;color:var(--mut);font-size:.85rem;margin-bottom:var(--sp-3)">
           <svg class="ic" viewBox="0 0 24 24"><use href="#i-shieldcheck"/></svg><span data-en="Two-factor authentication">Zwei-Faktor-Authentifizierung</span></div>
@@ -498,12 +520,6 @@
 5. Dienst neu starten. Passwort, Secrets und Einstellungen sind wieder da.</pre>
         </details>
       </div>
-
-      <div class="card" id="healtherrbox" style="margin-top:var(--sp-3);display:none">
-        <div style="display:flex;align-items:center;gap:8px;color:var(--red);font-size:.85rem;margin-bottom:var(--sp-3)">
-          <svg class="ic" viewBox="0 0 24 24"><use href="#i-alert"/></svg><span data-en="Recent errors from mapping runs">Letzte Fehler aus den Mapping-Läufen</span></div>
-        <pre id="healtherrs" style="margin:0;font-size:.76rem;line-height:1.6;color:var(--mut);white-space:pre-wrap;overflow-wrap:anywhere"></pre>
-      </div>
     </div>
   </div></section>
 
@@ -532,7 +548,7 @@
 <nav id="bottomnav" aria-label="Hauptnavigation" data-en-title="Main navigation">
   <button data-tab="graph" class="on" data-act="tab" data-arg="graph"><svg class="ic" viewBox="0 0 24 24"><use href="#i-graph"/></svg><span data-en="Graphs">Graphen</span></button>
   <button data-tab="ask" data-act="tab" data-arg="ask"><svg class="ic" viewBox="0 0 24 24"><use href="#i-spark"/></svg><span data-en="Ask">Fragen</span></button>
-  <button data-tab="secrets" data-act="tab" data-arg="secrets"><svg class="ic" viewBox="0 0 24 24"><use href="#i-key"/></svg><span data-en="Secrets">Secrets</span></button>
+  <button data-tab="projekte" data-act="tab" data-arg="projekte"><svg class="ic" viewBox="0 0 24 24"><use href="#i-graph"/></svg><span data-en="Projects">Projekte</span></button>
   <button data-tab="mapping" data-act="tab" data-arg="mapping"><svg class="ic" viewBox="0 0 24 24"><use href="#i-moon"/></svg><span data-en="Mapping">Mapping</span></button>
   <button id="morebtn" data-act="more"><svg class="ic" viewBox="0 0 24 24"><use href="#i-more"/></svg><span data-en="More">Mehr</span></button>
 </nav>
@@ -549,7 +565,11 @@
 <dialog id="moredlg" style="width:min(94vw,20rem)">
   <h3 style="margin:0 0 var(--sp-3)" data-en="More">Mehr</h3>
   <div style="display:flex;flex-direction:column;gap:6px">
-    <button class="btn ghost monly" style="justify-content:flex-start;min-height:48px" data-act="moretab" data-arg="connect">
+    <button class="btn ghost" style="justify-content:flex-start;min-height:48px" data-act="moretab" data-arg="secrets">
+      <svg class="ic" viewBox="0 0 24 24"><use href="#i-key"/></svg><span data-en="Secrets">Secrets</span></button>
+    <button class="btn ghost" style="justify-content:flex-start;min-height:48px" data-act="moretab" data-arg="settings">
+      <svg class="ic" viewBox="0 0 24 24"><use href="#i-lock"/></svg><span data-en="Settings">Einstellungen</span></button>
+    <button class="btn ghost" style="justify-content:flex-start;min-height:48px" data-act="moretab" data-arg="connect">
       <svg class="ic" viewBox="0 0 24 24"><use href="#i-link"/></svg><span data-en="Connect">Verbinden</span></button>
     <button class="btn ghost" style="justify-content:flex-start;min-height:48px" data-act="moretab" data-arg="health">
       <svg class="ic" viewBox="0 0 24 24"><use href="#i-pulse"/></svg><span data-en="Diagnostics">Diagnose</span></button>
