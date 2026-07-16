@@ -114,6 +114,28 @@ def test_login_und_alle_tabs(seite):
     assert not seite.fehler, seite.fehler
 
 
+def test_refresh_bleibt_auf_aktuellem_tab(seite):
+    """Nutzer-Wunsch: Aktualisieren/Reload wirft nicht auf den Standard-Tab zurück.
+    Der aktuelle Tab steht im Hash; nach dem Reload (Token liegt in localStorage) stellt
+    boot() ihn wieder her."""
+    _anmelden(seite)
+    seite.evaluate("tab('mapping')")
+    seite.wait_for_timeout(300)
+    assert seite.evaluate("() => location.hash") == "#mapping"
+    seite.reload()
+    for _ in range(150):  # CSP verbietet wait_for_function (eval) -> pollen
+        fertig = seite.evaluate(
+            "() => window.BOOTED === true && "
+            "getComputedStyle(document.getElementById('login')).display === 'none'"
+        )
+        if fertig:
+            break
+        seite.wait_for_timeout(100)
+    assert seite.evaluate("() => document.getElementById('tab-mapping').classList.contains('on')"), (
+        "Nach Reload nicht mehr auf dem Mapping-Tab"
+    )
+
+
 def test_secret_anlegen_lesen_loeschen_im_browser(seite):
     """Der wichtigste Nutzerweg, komplett durch die echte Oberfläche geklickt."""
     _anmelden(seite)
@@ -176,9 +198,9 @@ def test_kopfleiste_bricht_auf_keiner_breite(browser, hub, fresh_vault, breite, 
     nav_sichtbar = page.evaluate("getComputedStyle(document.querySelector('nav.desktop')).display !== 'none'")
     assert nav_sichtbar is (modus == "desktop")
 
-    # Der Abmelden-Knopf muss vollständig im Bild sein
-    rechts = page.evaluate("document.getElementById('logoutbtn').getBoundingClientRect().right")
-    assert rechts <= fenster, "Abmelden-Knopf ragt aus dem Bild"
+    # Der letzte Kopf-Knopf (Aktualisieren) muss vollständig im Bild sein
+    rechts = page.evaluate("document.getElementById('refreshbtn').getBoundingClientRect().right")
+    assert rechts <= fenster, "Refresh-Knopf ragt aus dem Bild"
     ctx.close()
 
 

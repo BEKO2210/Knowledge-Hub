@@ -2413,8 +2413,11 @@ async function loadAudit() {
 /* ================= boot ================= */
 async function boot() {
   window.BOOTED = true;
+  // Auf dem zuletzt geöffneten Tab bleiben (z. B. nach Refresh oder PWA-Update):
+  // jeder Tab schreibt seinen Namen in den Hash (#mapping …); hier zurückholen,
+  // sofern das Panel existiert.
   const h = location.hash.slice(1);
-  if (h === 'secrets' || h === 'audit') tab(h);
+  if (h && document.getElementById('tab-' + h)) tab(h);
   try { await loadProjects(); } catch {}
   // Beim allerersten Login die Einführung zeigen (danach über „?" oben erreichbar)
   let toured = true;
@@ -2456,6 +2459,9 @@ const AKTIONEN = {
   theme: () => toggleTheme(),
   tour: () => startTour(),
   logout: () => logout(),
+  // Neu laden und dabei auf dem aktuellen Tab bleiben: der Tab steht im Hash (#…),
+  // boot() stellt ihn wieder her. /ui ist network-first -> holt die frische Version.
+  refresh: () => location.reload(),
   togglepw: el => togglePw(el.dataset.arg, el),
   report: () => showReport(),
   zoom: el => zoomBy(el.dataset.arg === 'in' ? 1.3 : 1 / 1.3),
@@ -2548,5 +2554,25 @@ regler.addEventListener('input', () => {
 
 /* PWA: Service Worker registrieren (cached nur statische Assets — nie /ui/api oder /mcp) */
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/ui/sw.js').catch(() => {});
+  // PWA-Selbstaktualisierung: der alte Fehler war, dass eine bereits geöffnete PWA
+  // NIE neu navigiert und darum ewig die alte Oberfläche zeigte. Jetzt: bei einer neuen,
+  // aktivierten SW-Version einmal frisch laden — nur bei einem echten Update (es gab schon
+  // einen Controller), nicht bei der Erstinstallation, und nur einmal (kein Reload-Loop).
+  // Der Tab bleibt erhalten (er steht im Hash, boot() holt ihn zurück).
+  let neuGeladen = false;
+  navigator.serviceWorker.register('/ui/sw.js').then((reg) => {
+    reg.addEventListener('updatefound', () => {
+      const warSchonKontrolliert = !!navigator.serviceWorker.controller;
+      const neu = reg.installing;
+      if (!neu || !warSchonKontrolliert) return;
+      neu.addEventListener('statechange', () => {
+        if (neu.state === 'activated' && !neuGeladen) { neuGeladen = true; location.reload(); }
+      });
+    });
+    // Beim Start und bei Rückkehr in den Vordergrund aktiv nach Updates schauen.
+    reg.update().catch(() => {});
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') reg.update().catch(() => {});
+    });
+  }).catch(() => {});
 }
