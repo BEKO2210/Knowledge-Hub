@@ -65,9 +65,7 @@ def _ist_token_parameter_fehler(code: int, detail: str) -> bool:
     """Heilbarer 400er: der Anbieter lehnt den geratenen Token-Parameter ab
     und will den anderen Namen — in beide Richtungen erkennen."""
     return (
-        code == 400
-        and _erwaehnt_token_limit(detail)
-        and any(wort in detail.lower() for wort in _ABLEHNUNG)
+        code == 400 and _erwaehnt_token_limit(detail) and any(wort in detail.lower() for wort in _ABLEHNUNG)
     )
 
 
@@ -105,7 +103,9 @@ def _post_json(req: urllib.request.Request) -> dict:
     raise LLMError("Anbieter nicht erreichbar: Versuche erschöpft.")  # pragma: no cover
 
 
-def _call_openai(base_url: str, key: str, model: str, system: str, user: str, limit: int = 900) -> str:
+def _call_openai(
+    base_url: str, key: str, model: str, system: str, user: str, limit: int = 900
+) -> tuple[str, dict[str, int]]:
     url = base_url.rstrip("/") + "/chat/completions"
     kopf = {"Content-Type": "application/json", "Authorization": f"Bearer {key}"}
     # Passenden Namen raten — und wenn der Anbieter widerspricht, den anderen nehmen.
@@ -142,10 +142,14 @@ def _call_openai(base_url: str, key: str, model: str, system: str, user: str, li
         # Am Token-Limit abgeschnitten — die Extraktion würde sonst halbes JSON
         # als „gültige" Antwort verbuchen.
         raise LLMError("Antwort abgeschnitten (Token-Limit erreicht) — Limit erhöhen.")
-    return content.strip()
+    # Usage für die Nachtlauf-Kostenverbuchung (e486ab4) mitgeben.
+    u = data.get("usage") or {}
+    return content.strip(), {"in": int(u.get("prompt_tokens", 0)), "out": int(u.get("completion_tokens", 0))}
 
 
-def _call_anthropic(key: str, model: str, system: str, user: str, limit: int = 900) -> str:
+def _call_anthropic(
+    key: str, model: str, system: str, user: str, limit: int = 900
+) -> tuple[str, dict[str, int]]:
     try:
         import anthropic
     except ImportError as e:  # pragma: no cover
@@ -170,23 +174,47 @@ def _call_anthropic(key: str, model: str, system: str, user: str, limit: int = 9
     if msg.stop_reason == "max_tokens":
         # Am Limit abgeschnitten — wie finish_reason == "length" im OpenAI-Pfad.
         raise LLMError("Antwort abgeschnitten (Token-Limit erreicht) — Limit erhöhen.")
-    return "".join(b.text for b in msg.content if b.type == "text").strip()
+    text = "".join(b.text for b in msg.content if b.type == "text").strip()
+    # Usage für die Nachtlauf-Kostenverbuchung (e486ab4) mitgeben.
+    usage = getattr(msg, "usage", None)
+    return text, {
+        "in": int(getattr(usage, "input_tokens", 0) or 0),
+        "out": int(getattr(usage, "output_tokens", 0) or 0),
+    }
 
 
-def ask(backend: dict, model: str, key: str, system: str, user: str, limit: int = 900) -> str:
+def ask(
+    backend: dict,
+    model: str,
+    key: str,
+    system: str,
+    user: str,
+    limit: int = 900,
+    usage: dict | None = None,
+) -> str:
     """Eine Frage an das konfigurierte Backend stellen.
 
     limit = maximale Antwort-Tokens. 900 reicht für Erklärungen und Chat-Antworten;
     die Graph-Extraktion braucht mehr (JSON mit bis zu 12 Entities + Fakten) und
     übergibt ein höheres Limit — sonst wird das JSON mittendrin abgeschnitten.
+
+    usage (optional): wird — wenn übergeben — um die verbrauchten Tokens dieses
+    Aufrufs erhöht (`in`/`out`/`calls`). So kann der Extraktor die Nachtlauf-Kosten
+    verbuchen, während Chat/Explain den Parameter einfach weglassen.
     """
     api = backend.get("api", "openai")
     if api == "anthropic":
-        return _call_anthropic(key, model, system, user, limit)
-    base = backend.get("base_url")
-    if not base:
-        raise LLMError("Für dieses Backend ist keine base_url konfiguriert.")
-    return _call_openai(base, key or "local", model, system, user, limit)
+        text, u = _call_anthropic(key, model, system, user, limit)
+    else:
+        base = backend.get("base_url")
+        if not base:
+            raise LLMError("Für dieses Backend ist keine base_url konfiguriert.")
+        text, u = _call_openai(base, key or "local", model, system, user, limit)
+    if usage is not None:
+        usage["in"] = usage.get("in", 0) + u.get("in", 0)
+        usage["out"] = usage.get("out", 0) + u.get("out", 0)
+        usage["calls"] = usage.get("calls", 0) + 1
+    return text
 
 
 # Nutzereingaben (Frage/Knotenname) im Prompt deckeln — nur graph_context war
