@@ -143,22 +143,24 @@ nav.desktop button{
 nav.desktop button:hover{color:var(--txt)}
 nav.desktop button.on{background:var(--surface2);color:var(--txt)}
 nav.desktop button.on svg{color:var(--acc)}
-#langbtn,#themebtn,#helpbtn,#logoutbtn{flex:none}
+#langbtn,#themebtn,#helpbtn,#refreshbtn{flex:none}
 #langbtn{background:none;border:1px solid var(--line);color:var(--mut);border-radius:var(--r-sm);min-height:44px;min-width:44px;font-size:.8rem;font-weight:600;letter-spacing:.02em}
 #langbtn:hover{color:var(--txt);border-color:var(--line2)}
 #themebtn{margin-left:6px;background:none;border:1px solid var(--line);color:var(--mut);border-radius:var(--r-sm);min-height:44px;min-width:44px;display:flex;align-items:center;justify-content:center}
 #themebtn:hover{color:var(--txt);border-color:var(--line2)}
 #helpbtn{margin-left:6px;background:none;border:1px solid var(--line);color:var(--mut);border-radius:var(--r-sm);min-height:44px;min-width:44px;display:flex;align-items:center;justify-content:center}
 #helpbtn:hover{color:var(--txt);border-color:var(--line2)}
-#logoutbtn{margin-left:8px;background:none;border:1px solid var(--line);color:var(--mut);border-radius:var(--r-sm);min-height:44px;min-width:44px;display:flex;align-items:center;justify-content:center;gap:8px;padding:0 12px}
-#logoutbtn:hover{color:var(--txt);border-color:var(--line2)}
-#logoutbtn span{font-size:.85rem}
+/* Aktualisieren: schlichter Icon-Knopf wie Theme/Hilfe — kein Text, kein grauer Kasten. */
+#refreshbtn{margin-left:6px;background:none;border:1px solid var(--line);color:var(--mut);border-radius:var(--r-sm);min-height:44px;min-width:44px;display:flex;align-items:center;justify-content:center}
+#refreshbtn:hover{color:var(--acc);border-color:var(--acc)}
+#refreshbtn:hover svg{transform:rotate(90deg)}
+#refreshbtn svg{transition:transform .35s cubic-bezier(.4,0,.2,1)}
+#refreshbtn:active svg{animation:kmcp-spin .6s cubic-bezier(.4,0,.2,1)}
+@keyframes kmcp-spin{to{transform:rotate(360deg)}}
 /* Schmale Notebooks (1101–1260): Wortmarke und Abmelden-Text weichen, damit die
    Navigation vollständig sichtbar bleibt. Icon und Knopf bleiben erhalten. */
 @media(min-width:1101px) and (max-width:1260px){
   .logo .brandtext{display:none}
-  #logoutbtn span{display:none}
-  #logoutbtn{padding:0;min-width:44px}
 }
 /* Sekundäre Einträge im „Mehr"-Menü sind am Desktop bereits im Header sichtbar. */
 @media(min-width:1101px){#moredlg .monly{display:none}}
@@ -530,10 +532,9 @@ dialog .row{display:flex;gap:var(--sp-2);justify-content:flex-end}
    Das ist auf Tablets klarer als eine gequetschte oder scrollende Kopfleiste. */
 @media(max-width:1100px){
   nav.desktop{display:none}
-  #logoutbtn span{display:none}
   /* Sprache/Theme/Hilfe wandern ins „Mehr"-Menü, damit der Header nicht bricht */
   #langbtn,#themebtn,#helpbtn{display:none}
-  #logoutbtn{margin-left:auto}
+  #refreshbtn{margin-left:auto}
   /* Ein langer (konfigurierbarer) Markenname darf den Header bei 320 px nicht über den
      Rand schieben (horizontaler Reflow, WCAG 1.4.10): Logo gibt nach, Text wird gekürzt. */
   .logo{flex:0 1 auto;min-width:0}
