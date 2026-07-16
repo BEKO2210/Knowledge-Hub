@@ -854,6 +854,76 @@ async def project_check(request: Request) -> JSONResponse:
 _repairs: dict[str, dict] = {}
 
 
+# Grobe Inhalts-Klassifikation (angelehnt an graphify/detect.py) — nur für
+# verständliche Meldungen, nicht für die eigentliche Extraktion.
+_CODE_SUFFIXES = {
+    ".py",
+    ".ts",
+    ".tsx",
+    ".js",
+    ".jsx",
+    ".mjs",
+    ".go",
+    ".rs",
+    ".java",
+    ".cpp",
+    ".cc",
+    ".c",
+    ".h",
+    ".hpp",
+    ".rb",
+    ".swift",
+    ".kt",
+    ".cs",
+    ".scala",
+    ".php",
+    ".lua",
+    ".ex",
+    ".exs",
+    ".jl",
+    ".vue",
+    ".svelte",
+    ".astro",
+    ".dart",
+    ".sql",
+    ".r",
+    ".sh",
+    ".bash",
+    ".json",
+    ".tf",
+    ".zig",
+}
+_DOC_SUFFIXES = {".md", ".mdx", ".qmd", ".txt", ".rst", ".html", ".yaml", ".yml", ".pdf"}
+_SKIP_DIRS = {
+    ".git",
+    "node_modules",
+    "__pycache__",
+    ".venv",
+    "venv",
+    ".next",
+    "dist",
+    "build",
+    "graphify-out",
+}
+
+
+def _content_counts(p: Path) -> tuple[int, int]:
+    """Zählt grob Code- und Dokumentdateien eines Projekts (code, docs)."""
+    code = docs = 0
+    for f in p.rglob("*"):
+        if not f.is_file() or f.name.startswith("."):
+            continue
+        rel = f.relative_to(p).parts
+        if any(part in _SKIP_DIRS or part.startswith(".") for part in rel[:-1]):
+            continue
+        s = f.suffix.lower()
+        if s in _CODE_SUFFIXES:
+            code += 1
+        elif s in _DOC_SUFFIXES:
+            docs += 1
+    return code, docs
+
+
 def _repair_worker(name: str, p: Path, cfg: dict) -> None:
     """Repariert, was reparierbar ist, und mappt das Projekt danach neu."""
     lines: list[str] = []
@@ -889,8 +959,40 @@ def _repair_worker(name: str, p: Path, cfg: dict) -> None:
         if secret and key:
             env[backend["env"]] = key
         elif secret:
+            label = backend.get("label", backend_name)
+            code_n, doc_n = _content_counts(p)
+            if code_n == 0:
+                # Nur Dokumente/Notizen: Ohne Key würde ein Leerlauf folgen, der mit
+                # „0 gefunden" endet und wie ein Defekt aussieht. Stattdessen ein
+                # klarer Stopp mit Anleitung (kind=action → UI zeigt Hinweis statt Fehler).
+                lines.append(T("Kein Fehler — es fehlt nur der KI-Schlüssel."))
+                lines.append("")
+                lines.append(
+                    T(
+                        "Dieses Projekt besteht aus Dokumenten und Notizen ({docs} Datei(en), kein Code). Ohne KI-Schlüssel kann der Hub daraus keinen Graphen bauen.",
+                        docs=doc_n,
+                    )
+                )
+                lines.append("")
+                lines.append(T("So geht es weiter:"))
+                lines.append(T("1. Tab „Mapping“ öffnen — dort steht die Karte „{label}-Key“.", label=label))
+                lines.append(
+                    T(
+                        "2. Key einfügen und „Key speichern“ drücken. {hint}",
+                        hint=backend.get("key_hint", ""),
+                    ).rstrip()
+                )
+                lines.append(T("3. Danach hier „Erneut versuchen“ drücken — dann wird das Projekt gemappt."))
+                _repairs[name] = {"status": "failed", "kind": "action", "log": "\n".join(lines)}
+                return
             args.append("--code-only")
-            lines.append(T("Kein API-Key hinterlegt — es wird nur Code gemappt (ohne Dokumente)."))
+            lines.append(
+                T(
+                    "Hinweis: Kein {label}-Key hinterlegt — nur der Code wird gemappt, {docs} Dokument(e) bleiben außen vor. Key im Tab „Mapping“ speichern, dann fließen auch Dokumente ein.",
+                    label=label,
+                    docs=doc_n,
+                )
+            )
 
         lines.append(
             T(
