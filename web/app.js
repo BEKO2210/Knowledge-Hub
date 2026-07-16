@@ -58,6 +58,7 @@ const EN = {
   'Fehler beim Speichern': 'Could not save',
   'Start fehlgeschlagen': 'Could not start',
   'Erneut versuchen': 'Try again',
+  'Kein Fehler — es fehlt nur der KI-Schlüssel (Anleitung im Hinweis)': 'Not an error — only the AI key is missing (instructions in the hint)',
   'Fertig': 'Done',
   'Aktiv': 'Active',
   'Problem': 'Problem',
@@ -1192,7 +1193,16 @@ async function repairProject(p, row) {
       setTimeout(() => { loadProjectsCard(); loadMapping(); refreshProjectSelectors(); }, 800);
     } else if (s.status === 'failed') {
       clearInterval(repairPoll); repairPoll = null;
-      toast(t('Reparatur fehlgeschlagen — siehe Protokoll'), false);
+      if (s.kind === 'action') {
+        /* Kein Defekt, sondern fehlender Key: Hinweis lesbar statt als Log-Wand
+           darstellen — Fließtext-Schrift, Bernstein statt Fehler-Grau. */
+        log.style.fontFamily = 'inherit';
+        log.style.fontSize = '.8rem';
+        log.style.color = 'var(--amber)';
+        toast(t('Kein Fehler — es fehlt nur der KI-Schlüssel (Anleitung im Hinweis)'), false);
+      } else {
+        toast(t('Reparatur fehlgeschlagen — siehe Protokoll'), false);
+      }
       btn.disabled = false;
       btn.innerHTML = `<svg class="ic" viewBox="0 0 24 24"><use href="#i-wrench"/></svg>${t('Erneut versuchen')}`;
     }
