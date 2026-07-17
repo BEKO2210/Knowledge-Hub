@@ -387,10 +387,16 @@ def test_graph_ohne_projekt_erklaert_sich(seite):
     kein Hinweis. Für einen neuen Nutzer sieht das aus, als sei der Hub kaputt.
     """
     _anmelden(seite)
-    seite.evaluate("tab('graph')")
-    seite.wait_for_timeout(2000)
+    # Vorbedingung erzwingen: dieser Test prüft den Leerzustand — kein von einer anderen
+    # Testdatei im geteilten Root liegen gebliebenes Projekt darf ihn verfälschen.
+    import shutil
 
-    assert seite.is_visible("#graphempty"), "Ohne Projekt muss ein Leerzustand erscheinen"
+    for d in (TMP / "projects").iterdir():
+        shutil.rmtree(d, ignore_errors=True) if d.is_dir() else d.unlink()
+
+    seite.evaluate("tab('graph')")
+    # Deterministisch auf den Leerzustand warten statt fester Zeitpause (Flaky unter Last).
+    seite.wait_for_selector("#graphempty", state="visible", timeout=8000)
     text = seite.inner_text("#graphempty")
     assert "Mapping" in text, f"Der Leerzustand muss den Weg zeigen: {text!r}"
 

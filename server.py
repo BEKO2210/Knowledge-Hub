@@ -49,6 +49,13 @@ KNOWLEDGE_ROOT = config.path(os.environ.get("KNOWLEDGE_ROOT", CFG["paths"]["know
 GRAPHIFY_BIN = os.environ.get("GRAPHIFY_BIN", str(config.path(CFG["paths"]["graphify_bin"])))
 MCP_TOKEN = os.environ.get("MCP_TOKEN", "")
 
+# Pipeline-Schritte als patchbare Modul-Konstanten (Tests mocken sie einzeln, statt
+# echte Extraktion/Clustering laufen zu lassen). Werte sind Standard = Produktion.
+_HIER = Path(__file__).parent
+EXTRACTION_BIN = str(_HIER / ".venv" / "bin" / "python") if (_HIER / ".venv").exists() else "python3"
+EXTRACTION_SCRIPT = str(_HIER / "extraction.py")
+CLUSTER_BIN = str(_HIER / "tools" / "graphify-cluster-force")
+
 # Härtestes zulässiges Request-Body-Maß. Kein Endpunkt braucht mehr (Secret-Wert max.
 # 20 k, Fragen/Config kurz), aber offene Endpunkte (Login, oauth/register, Setup) lasen
 # den Body VOR Auth und Rate-Limit komplett in den Speicher — ein einzelner riesiger
@@ -378,19 +385,9 @@ def _build_worker_gesperrt(name: str, path: Path) -> None:
             # ein Build, der mittendrin stirbt, darf den gesunden Graphen nicht ersetzen.
             if buildmeta.snapshot_generation(path):
                 log.write("Snapshot der aktuellen Generation: .prev-generation/\n")
-            eigene = run_step(
-                [
-                    str(Path(__file__).parent / ".venv" / "bin" / "python")
-                    if (Path(__file__).parent / ".venv").exists()
-                    else "python3",
-                    str(Path(__file__).parent / "extraction.py"),
-                    str(path),
-                ],
-                log,
-            )
+            eigene = run_step([EXTRACTION_BIN, EXTRACTION_SCRIPT, str(path)], log)
             if eigene:
-                cluster_cmd = str(Path(__file__).parent / "tools" / "graphify-cluster-force")
-                if not run_step([cluster_cmd, str(path), "--no-label"], log):
+                if not run_step([CLUSTER_BIN, str(path), "--no-label"], log):
                     grund = scheitere(letzter_fehler)
                     return
                 if label_args and not run_step(label_args, log):
@@ -402,6 +399,27 @@ def _build_worker_gesperrt(name: str, path: Path) -> None:
                 if not run_step([GRAPHIFY_BIN, "update", str(path)], log):
                     grund = scheitere(f"{fehler_extraktion}; Fallback ebenso: {letzter_fehler}")
                     return
+            # „Vernünftige Infos" (D7): eine fehlende oder leere graph.json ist KEINE
+            # gültige Generation. extraction.py legt auch für ein leeres Projekt eine
+            # leere graph.json an — ohne diesen Riegel würde ein Lauf ganz ohne Fakten
+            # (leeres Projekt, fehlender API-Key oder kein Guthaben → Offline-Mapping
+            # liefert nichts) stillschweigend als Erfolg „done" veröffentlicht.
+            out_graph = path / "graphify-out" / "graph.json"
+            try:
+                anz_knoten = (
+                    len(json.loads(out_graph.read_text(encoding="utf-8")).get("nodes", []))
+                    if out_graph.exists()
+                    else 0
+                )
+            except Exception:  # noqa: BLE001 - kaputte Datei zählt wie keine Generation
+                anz_knoten = 0
+            if anz_knoten == 0:
+                grund = scheitere(
+                    "Generation unvollständig: keine Fakten extrahiert — graph.json fehlt "
+                    "oder ist leer (0 Knoten). Mögliche Ursachen: leeres Projekt, fehlender "
+                    "API-Key oder kein Guthaben. Details im Log."
+                )
+                return
             # Abnahme-Gate: nur eine validierte Generation bekommt ein Manifest und darf
             # veröffentlicht werden (Schema, Referenzen, Duplikate — Kap. 7).
             try:

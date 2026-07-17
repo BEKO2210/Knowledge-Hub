@@ -58,6 +58,9 @@ def test_fehlendes_werkzeug_endet_als_failed(monkeypatch, tmp_path):
     monkeypatch.setattr(server, "GRAPHIFY_BIN", "/bin/true")
     monkeypatch.setattr(server, "GRAPHIFY_SYNC", str(TMP / "gibt-es-nicht"))
     monkeypatch.setattr(server, "BUILD_LOG_DIR", tmp_path / "logs")
+    # Extraktion + Clustering neutralisieren → das _mini_graph-Fixture überlebt
+    monkeypatch.setattr(server, "EXTRACTION_BIN", "/bin/true")
+    monkeypatch.setattr(server, "CLUSTER_BIN", "/bin/true")
     _mini_graph(tmp_path)
 
     server._builds["p"] = {"status": "running", "started": 0, "finished": None}
@@ -108,6 +111,9 @@ def test_erfolgreicher_lauf_endet_als_done(monkeypatch, tmp_path):
     monkeypatch.setattr(server, "GRAPHIFY_BIN", "/bin/true")
     monkeypatch.setattr(server, "GRAPHIFY_SYNC", "/bin/true")
     monkeypatch.setattr(server, "BUILD_LOG_DIR", tmp_path / "logs")
+    # Extraktion + Clustering neutralisieren → das _mini_graph-Fixture überlebt
+    monkeypatch.setattr(server, "EXTRACTION_BIN", "/bin/true")
+    monkeypatch.setattr(server, "CLUSTER_BIN", "/bin/true")
     _mini_graph(tmp_path)
 
     server._builds["p"] = {"status": "running", "started": 0, "finished": None}
@@ -126,6 +132,9 @@ def test_lauf_ohne_graph_endet_als_failed_mit_manifestgrund(monkeypatch, tmp_pat
     monkeypatch.setattr(server, "GRAPHIFY_BIN", "/bin/true")
     monkeypatch.setattr(server, "GRAPHIFY_SYNC", "/bin/true")
     monkeypatch.setattr(server, "BUILD_LOG_DIR", tmp_path / "logs")
+    # Extraktion neutralisieren → es entsteht KEIN Graph (echter Leer-Lauf)
+    monkeypatch.setattr(server, "EXTRACTION_BIN", "/bin/true")
+    monkeypatch.setattr(server, "CLUSTER_BIN", "/bin/true")
 
     server._builds["p"] = {"status": "running", "started": 0, "finished": None}
     server._build_worker("p", tmp_path)
