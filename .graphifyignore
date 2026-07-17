@@ -8,3 +8,25 @@
 *.chunk.js
 vendor/
 third_party/
+
+# Secrets/Credentials: niemals extrahieren (Defense-in-Depth —
+# .gitignore allein schützt nicht, graphify liest nur diese Datei)
+.env
+.env.*
+*.env
+*.key
+*.pem
+id_rsa*
+*secret*
+*credential*
+# Beispiele/Templates bleiben erlaubt: Leser mit gitignore-Semantik nehmen die
+# Negation; die Hub-Extraktion lässt .example/.sample/.template ohnehin durch.
+!*.example
+!*.sample
+!*.template
+
+# Hub-State: gehört nie in einen Wissensgraphen
+config.yaml
+vault.enc*
+vault.lock
+oauth_state.json

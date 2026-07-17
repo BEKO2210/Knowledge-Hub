@@ -58,7 +58,6 @@ const EN = {
   'Fehler beim Speichern': 'Could not save',
   'Start fehlgeschlagen': 'Could not start',
   'Erneut versuchen': 'Try again',
-  'Kein Fehler — es fehlt nur der KI-Schlüssel (Anleitung im Hinweis)': 'Not an error — only the AI key is missing (instructions in the hint)',
   'Fertig': 'Done',
   'Aktiv': 'Active',
   'Problem': 'Problem',
@@ -301,6 +300,7 @@ const EN = {
   'Oben „Hinzufügen“ nutzen und den QUELLordner des Projekts wählen — der Graph gehört dann dazu.': 'Use “Add” above and pick the project’s SOURCE folder — the graph will belong to it.',
   'Graph „{n}“ vollständig entfernen? Hub-Kopie, Index und gespeicherte Antworten werden gelöscht. Der Quellordner bleibt unberührt.': 'Remove graph “{n}” completely? Hub copy, index and saved answers will be deleted. The source folder stays untouched.',
   'Entfernt': 'Removed',
+  'Sitzung abgelaufen — bitte neu anmelden': 'Session expired — please sign in again',
 };
 
 function t(s) {
@@ -398,7 +398,10 @@ function setLang(l) {
 function redrawDynamic() {
   if (!window.BOOTED) return;
   try {
-    if (typeof buildLegend === 'function' && window.FG) buildLegend();
+    /* buildLegend braucht die Knotenliste: Ohne Argument warf `for (const n of nodes)`
+       einen TypeError, der catch schluckte ihn — und tab(CURRENT_TAB) wurde
+       übersprungen, d. h. der Sprachwechsel renderte den aktiven Tab nie neu. */
+    if (typeof buildLegend === 'function' && window.FG) buildLegend([...NODEMAP.values()]);
     if (typeof CURRENT_TAB === 'string' && CURRENT_TAB) tab(CURRENT_TAB);
   } catch (e) { /* beim Start noch nichts zu zeichnen */ }
 }
@@ -428,9 +431,15 @@ async function api(path, opts = {}) {
     if (e.name === 'AbortError') throw e;
     // Kein Netz, Server weg, Tunnel unterbrochen — der häufigste Fall im Alltag.
     showError(t('Keine Verbindung zum Hub. Prüfe deine Internetverbindung.'));
+    e._gemeldet = true;   // Banner ist schon da — der globale Fänger darf ihn nicht überschreiben
     throw e;
   }
-  if (r.status === 401) { logout(); throw new Error('unauthorized'); }
+  if (r.status === 401) {
+    // Sitzung mitten in der Nutzung abgelaufen/widerrufen — sichtbar abmelden, nicht stumm.
+    toast(t('Sitzung abgelaufen — bitte neu anmelden'), false);
+    logout();
+    throw new Error('unauthorized');
+  }
   if (r.status === 423) {                    // Vault gesperrt -> neu anmelden
     toast(t('Vault ist gesperrt — bitte neu anmelden'), false);
     logout();
@@ -488,12 +497,15 @@ async function holeJson(pfad, opts) {
   if (!r.ok) {
     const msg = await fehlerText(r, t('Der Hub hat die Anfrage abgelehnt.'));
     showError(msg);
-    throw new Error('http ' + r.status);
+    const feh = new Error('http ' + r.status);
+    feh._gemeldet = true;   // Banner ist schon da — der globale Fänger darf ihn nicht überschreiben
+    throw feh;
   }
   try {
     return await r.json();
   } catch (e) {
     showError(t('Der Hub hat keine gültige Antwort geschickt. Steht die Verbindung noch?'));
+    e._gemeldet = true;
     throw e;
   }
 }
@@ -526,7 +538,9 @@ async function doLogin(e) {
   btn.disabled = true;
   $('loginerr').textContent = '';
   try {
-    const r = await fetch('/ui/api/login', {method: 'POST', headers: {'Content-Type': 'application/json'},
+    /* X-Lang mitschicken: Die 2FA-/Fehlermeldungen des Logins übersetzt der Server —
+       ohne die Kopfzeile folgt er dem Browser statt der gewählten UI-Sprache. */
+    const r = await fetch('/ui/api/login', {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Lang': LANG},
       body: JSON.stringify({password: $('pw').value, code: $('code').value.trim()})});
     if (r.status === 429) { $('loginerr').textContent = t('Zu viele Fehlversuche — bitte 15 Minuten warten.'); return; }
     const j = await r.json().catch(() => ({}));
@@ -547,6 +561,16 @@ async function doLogin(e) {
   finally { btn.disabled = false; }
 }
 function logout() {
+  /* Server-seitig abmelden, damit das Token sofort ungültig wird (Endpunkt aus FIX-O,
+     Vertrag: POST /ui/api/logout mit Bearer-Kopfzeile → {"ok":true}). „Fire and forget":
+     Klappt der Ruf nicht (Netz weg, Endpunkt noch nicht ausgerollt), wird trotzdem lokal
+     abgemeldet — der Nutzer darf nie am Abmelden gehindert werden. */
+  if (TOKEN) fetch('/ui/api/logout', {method: 'POST', headers: {'Authorization': 'Bearer ' + TOKEN}}).catch(() => {});
+  /* Polls stoppen — sonst laufen Mapping-/Backup-/Reparatur-Polling hinter dem
+     Anmeldeschirm weiter und ernten ein 401 nach dem anderen. */
+  clearInterval(mapPoll); mapPoll = null;
+  clearInterval(backupPoll); backupPoll = null;
+  clearInterval(repairPoll); repairPoll = null;
   localStorage.removeItem('kmcp_ui_token'); TOKEN = '';
   $('login').style.display = 'flex';
 }
@@ -561,25 +585,20 @@ function tab(name) {
   });
   $('tab-' + name).classList.add('on');
   /* Diagnose und Audit liegen hinter „Mehr“ — der Knopf zeigt an, dass man dort steht. */
-  // Tabs, die hinter „Mehr" liegen (nicht in der Haupt-/Bottom-Navigation) — beide
-  // Mehr-Knöpfe (Desktop + Handy) zeigen an, dass man in einem davon steht.
-  const MEHR_TABS = ['secrets', 'settings', 'connect', 'health', 'audit'];
   const nm = $('navmore');
-  if (nm) nm.classList.toggle('on', MEHR_TABS.includes(name));
+  if (nm) nm.classList.toggle('on', name === 'health' || name === 'audit');
   if (name !== 'report') history.replaceState(null, '', '#' + name);
   closeSide();
   if (name === 'secrets') loadSecrets();
   if (name === 'audit') loadAudit();
-  if (name === 'projekte') { loadProjectsCard(); loadGraphStock(); }
-  if (name === 'mapping') loadMapping();
-  if (name === 'health') loadHealth();
-  if (name === 'settings') { loadTwoFA(); loadVault(); loadBackup(); }
+  if (name === 'mapping') { loadMapping(); loadProjectsCard(); loadGraphStock(); }
+  if (name === 'health') { loadHealth(); loadTwoFA(); loadVault(); loadBackup(); }
   if (name === 'connect') loadConnect();
   if (name === 'graph') setTimeout(fgResize, 0);
   if (name === 'ask') loadAsk();
   // Handy: „Mehr"-Knopf hervorheben, wenn ein darin liegender Tab aktiv ist
   const more = $('morebtn');
-  if (more) more.classList.toggle('on', MEHR_TABS.includes(name));
+  if (more) more.classList.toggle('on', name === 'health' || name === 'audit' || name === 'connect');
 }
 function openMore() { $('moredlg').showModal(); }
 
@@ -651,7 +670,7 @@ async function loadAsk() {
     try {
       const list = await holeJson('/ui/api/projects');
       $('askproj').innerHTML = list.map(p =>
-        `<option value="${p.project}">${p.project}</option>`).join('');
+        `<option value="${escapeHtml(p.project)}">${escapeHtml(p.project)}</option>`).join('');
       askProjectsLoaded = true;
     } catch {}
   }
@@ -748,7 +767,10 @@ async function sendAsk(e) {
   } catch { loading.remove(); thread.appendChild(askBubble('ai', escapeHtml(t('Fehler bei der Anfrage.')))); }
   finally { $('asksend').disabled = false; $('askinput').focus(); }
 }
-function escapeHtml(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+/* textContent→innerHTML escaped & < > — für Attribut-Kontexte (title="…", aria-label="…",
+   value="…") muss zusätzlich das Anführungszeichen weg, sonst bricht ein " im Wert aus
+   dem Attribut aus. Im Textkontext ist &quot; unschädlich (zeigt einfach "). */
+function escapeHtml(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML.replace(/"/g, '&quot;'); }
 /* Zeilennummer nur zeigen, wenn es wirklich eine ist (Markdown-Knoten haben keine → "None"/"L1") */
 function locLabel(loc) {
   const m = /^L?(\d+)$/.exec(String(loc || ''));
@@ -834,7 +856,10 @@ async function loadMapping() {
   $('mapbackend').innerHTML = BACKENDS.map(b =>
     `<option value="${b.id}" ${b.id === s.backend ? 'selected' : ''}>${b.label}${b.has_key ? '' : ' ' + t('— kein Key')}</option>`).join('');
   renderBackend(s.backend, s.model);
+  const liefVorher = $('maprunning').style.display === 'flex';
   $('maprunning').style.display = s.running ? 'flex' : 'none';
+  /* Lauf gerade zu Ende gegangen: neue/aktualisierte Graphen in die Auswahlen übernehmen. */
+  if (liefVorher && !s.running) refreshProjectSelectors();
   $('runbtn').disabled = s.running || !s.has_key;
   $('runbtn').title = s.has_key ? '' : t('Zuerst einen API-Key hinterlegen');
   const c = s.costs, l = c.last;
@@ -948,7 +973,7 @@ async function loadHistory() {
         const btn = document.createElement('button');
         btn.className = 'btn ghost sm';
         btn.textContent = t('Prüfen & reparieren');
-        btn.onclick = () => { tab('projekte'); toast(t2('Öffne die Projektliste — dort „{p}“ reparieren.', {p: f.project})); loadProjectsCard(); };
+        btn.onclick = () => { tab('mapping'); toast(t2('Öffne die Projektliste — dort „{p}“ reparieren.', {p: f.project})); loadProjectsCard(); };
         line.appendChild(btn);
         box.appendChild(line);
       }
@@ -960,7 +985,7 @@ async function loadHistory() {
         const btn = document.createElement('button');
         btn.className = 'btn ghost sm';
         btn.textContent = t('Zur Sicherung');
-        btn.onclick = () => { tab('settings'); setTimeout(() => $('backupcard')?.scrollIntoView({behavior: 'smooth', block: 'center'}), 300); };
+        btn.onclick = () => { tab('health'); setTimeout(() => $('backupcard')?.scrollIntoView({behavior: 'smooth', block: 'center'}), 300); };
         line.appendChild(btn);
         box.appendChild(line);
       }
@@ -1063,7 +1088,7 @@ async function loadProjectsCard() {
     const broken = p.issues && p.issues.length;
     row.innerHTML = `<div class="top">
       <label class="switch" style="transform:scale(.82);margin:-4px">
-        <input type="checkbox" ${p.enabled ? 'checked' : ''} aria-label="${t2('Projekt {name} im Nacht-Lauf', {name: p.name})}">
+        <input type="checkbox" ${p.enabled ? 'checked' : ''} aria-label="${escapeHtml(t2('Projekt {name} im Nacht-Lauf', {name: p.name}))}">
         <span class="slider"></span>
       </label>
       <div style="flex:1;min-width:0">
@@ -1122,12 +1147,15 @@ async function loadProjectsCard() {
         body: JSON.stringify({path: p.path, action: 'remove'})});
       if (!r.ok) { await zeigeFehler(r, t('Entfernen fehlgeschlagen')); return; }
       toast(t2('Komplett entfernt: {name}', {name: p.name}));
-      loadProjectsCard(); loadMapping();
+      loadProjectsCard(); loadMapping(); refreshProjectSelectors();
     };
     box.appendChild(row);
   }
 }
-/* Projekt reparieren: behebt was geht und mappt danach neu — mit Live-Protokoll */
+/* Projekt reparieren: behebt was geht und mappt danach neu — mit Live-Protokoll.
+   Der Poll läuft als Modul-Variable, damit logout() ihn (wie mapPoll/backupPoll)
+   stoppen kann — sonst pollt er hinter dem Anmeldeschirm weiter und erntet 401er. */
+let repairPoll = null;
 async function repairProject(p, row) {
   const btn = row.querySelector('.repairbtn');
   const log = row.querySelector('.repairlog');
@@ -1135,29 +1163,36 @@ async function repairProject(p, row) {
   btn.innerHTML = `<div class="spinner" style="--sz:16px"></div>${t('Repariere…')}`;
   log.style.display = 'block';
   log.textContent = t('Reparatur gestartet…');
-  const r = await api('/ui/api/mapping/repair', {method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({path: p.path})});
-  if (!r.ok) { await zeigeFehler(r, t('Start fehlgeschlagen')); btn.disabled = false; return; }
-  const poll = setInterval(async () => {
+  let r;
+  try {
+    r = await api('/ui/api/mapping/repair', {method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({path: p.path})});
+  } catch (e) {
+    /* Netz weg o. ä.: Knopf wieder herstellen, sonst bleibt die Karte auf
+       „Repariere…" hängen und das Protokoll auf „gestartet". */
+    btn.disabled = false;
+    btn.innerHTML = `<svg class="ic" viewBox="0 0 24 24"><use href="#i-wrench"/></svg>${t('Erneut versuchen')}`;
+    log.textContent = t('Start fehlgeschlagen');
+    return;
+  }
+  if (!r.ok) {
+    await zeigeFehler(r, t('Start fehlgeschlagen'));
+    btn.disabled = false;
+    btn.innerHTML = `<svg class="ic" viewBox="0 0 24 24"><use href="#i-wrench"/></svg>${t('Erneut versuchen')}`;
+    return;
+  }
+  clearInterval(repairPoll);
+  repairPoll = setInterval(async () => {
     const s = await holeJson('/ui/api/mapping/repair?path=' + encodeURIComponent(p.path));
     log.textContent = s.log || '';
     log.scrollTop = log.scrollHeight;
     if (s.status === 'done') {
-      clearInterval(poll);
+      clearInterval(repairPoll); repairPoll = null;
       toast(t2('{name} repariert', {name: p.name}));
-      setTimeout(() => { loadProjectsCard(); loadMapping(); }, 800);
+      setTimeout(() => { loadProjectsCard(); loadMapping(); refreshProjectSelectors(); }, 800);
     } else if (s.status === 'failed') {
-      clearInterval(poll);
-      if (s.kind === 'action') {
-        /* Kein Defekt, sondern fehlender Key: Hinweis lesbar statt als Log-Wand
-           darstellen — Fließtext-Schrift, Bernstein statt Fehler-Grau. */
-        log.style.fontFamily = 'inherit';
-        log.style.fontSize = '.8rem';
-        log.style.color = 'var(--amber)';
-        toast(t('Kein Fehler — es fehlt nur der KI-Schlüssel (Anleitung im Hinweis)'), false);
-      } else {
-        toast(t('Reparatur fehlgeschlagen — siehe Protokoll'), false);
-      }
+      clearInterval(repairPoll); repairPoll = null;
+      toast(t('Reparatur fehlgeschlagen — siehe Protokoll'), false);
       btn.disabled = false;
       btn.innerHTML = `<svg class="ic" viewBox="0 0 24 24"><use href="#i-wrench"/></svg>${t('Erneut versuchen')}`;
     }
@@ -1193,7 +1228,7 @@ async function pickCurrent() {
   try {
     const r = await api('/ui/api/mapping/projects', {method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({path: pickAt})});
-    if (r.ok) { toast(t('Projekt hinzugefügt — läuft ab jetzt im Nacht-Mapping mit')); $('pickerdlg').close(); }
+    if (r.ok) { toast(t('Projekt hinzugefügt — läuft ab jetzt im Nacht-Mapping mit')); $('pickerdlg').close(); refreshProjectSelectors(); }
     else await zeigeFehler(r, t('Fehler'));
   } finally { $('pickok').disabled = false; loadProjectsCard(); loadMapping(); }
 }
@@ -1251,10 +1286,15 @@ async function saveMapping(e) {
 }
 async function runMapping() {
   $('runbtn').disabled = true;
-  const r = await api('/ui/api/mapping/run', {method: 'POST'});
-  if (r.ok) toast(t('Mapping gestartet'));
-  else await zeigeFehler(r, t('Start fehlgeschlagen'));
-  setTimeout(loadMapping, 1500);
+  try {
+    const r = await api('/ui/api/mapping/run', {method: 'POST'});
+    if (r.ok) toast(t('Mapping gestartet'));
+    else await zeigeFehler(r, t('Start fehlgeschlagen'));
+  } finally {
+    /* loadMapping() setzt den Knopf passend zum Laufstatus neu — ohne finally bliebe
+       er nach einem Netzfehler für immer ausgegraut. */
+    setTimeout(loadMapping, 1500);
+  }
 }
 
 /* ================= graph ================= */
@@ -1355,13 +1395,21 @@ async function loadProjects() {
   const list = await holeJson('/ui/api/projects');
   const sel = $('proj');
   sel.innerHTML = list.map(p =>
-    `<option value="${p.project}">${p.project} · ${t2('{n} Knoten', {n: p.nodes})}</option>`).join('');
+    `<option value="${escapeHtml(p.project)}">${escapeHtml(p.project)} · ${t2('{n} Knoten', {n: p.nodes})}</option>`).join('');
   /* Ohne Projekt blieb die Graph-Fläche vorher einfach leer — ein frisch installierter
      Hub sah aus, als sei er kaputt. Jetzt steht dort, was zu tun ist. */
   const leer = $('graphempty');
   if (leer) leer.style.display = list.length ? 'none' : '';
   $('graphbar').style.display = list.length ? '' : 'none';
   if (list.length) loadGraph();
+}
+/* Nach Projekt-Änderungen (Anlage, Löschung, Reparatur, Ende eines Mapping-Laufs) müssen
+   die Projekt-Auswahlen im Graph- (#proj) und Fragen-Tab (#askproj) mitfrisch werden —
+   sonst zeigen sie gelöschte Geister-Einträge, oder ein neues Projekt fehlt bis zum
+   manuellen Neuladen. loadAsk befüllt #askproj nur einmalig, darum Guard zurücksetzen. */
+function refreshProjectSelectors() {
+  askProjectsLoaded = false;
+  loadProjects().catch(() => {});   // Fehler meldet holeJson bereits als Banner
 }
 let ADJ = new Map(), NODEMAP = new Map(), comFilter = null, pathSource = null, pathIds = null;
 function limitChanged() {
@@ -1376,7 +1424,7 @@ async function loadGraph() {
     const slider = $('limit');
     // Regler am Anschlag = ALLE Knoten (kein Deckel)
     const lim = +slider.value >= +slider.max ? 0 : slider.value;
-    const g = await holeJson(`/ui/api/graph/${proj}?limit=${lim}`);
+    const g = await holeJson(`/ui/api/graph/${encodeURIComponent(proj)}?limit=${lim}`);
     // Regler-Maximum an die echte Projektgröße anpassen
     const atMax = +slider.value >= +slider.max;
     slider.max = Math.max(2000, Math.ceil(g.total_nodes / 50) * 50);
@@ -1647,7 +1695,7 @@ async function doExplain(frisch) {
        Ohne das Flag kommt eine bereits bezahlte Erklärung in Millisekunden zurück, statt
        dieselbe Frage ein zweites Mal zu bezahlen. */
     const q = frisch ? '&fresh=1' : '';
-    const r = await api(`/ui/api/explain/${$('proj').value}?node=${encodeURIComponent(sel.label)}${q}`);
+    const r = await api(`/ui/api/explain/${encodeURIComponent($('proj').value)}?node=${encodeURIComponent(sel.label)}${q}`);
     const j = await r.json();
     out.innerHTML = '';
     if (j.error) { out.textContent = j.error; }
@@ -1714,10 +1762,12 @@ function mdToHtml(md) {
   return html;
 }
 async function showReport() {
-  const j = await holeJson(`/ui/api/report/${$('proj').value}`);
+  const j = await holeJson(`/ui/api/report/${encodeURIComponent($('proj').value)}`);
   $('reportout').innerHTML = mdToHtml(j.markdown);
-  document.querySelectorAll('.tab').forEach(t => t.classList.remove('on'));
-  $('tab-report').classList.add('on');
+  /* Über den normalen Tab-Mechanismus gehen: Sonst zeigt CURRENT_TAB weiter auf den
+     alten Tab und ein Sprachwechsel (redrawDynamic → tab(CURRENT_TAB)) wirft den
+     Nutzer kommentarlos aus dem Report zurück. */
+  tab('report');
 }
 
 /* ================= secrets ================= */
@@ -1761,7 +1811,10 @@ async function loadSecrets() {
     };
     row.querySelector('[data-a=del]').onclick = async () => {
       if (!await askConfirm(t2('„{name}" wird unwiderruflich aus dem Vault gelöscht.', {name: n}))) return;
-      await api('/ui/api/secrets/' + encodeURIComponent(n), {method: 'DELETE'});
+      const r = await api('/ui/api/secrets/' + encodeURIComponent(n), {method: 'DELETE'});
+      /* Erst r.ok prüfen, DANN „Gelöscht" melden — sonst behauptet ein 4xx
+         (z. B. Name bereits weg) einen Erfolg, der nie stattgefunden hat. */
+      if (!r.ok) { await zeigeFehler(r, t('Fehlgeschlagen')); return; }
       toast(t2('Gelöscht: {name}', {name: n}));
       loadSecrets();
     };
@@ -2031,8 +2084,15 @@ async function loadHealth() {
       };
       row.querySelector('div > div').appendChild(ab);
     }
-    // Beim Angriffsschutz einen „Freigeben"-Knopf anbieten (falls Selbst-Aussperrung)
-    if (c.name === 'Angriffsschutz' && c.status === 'err') {
+    // Beim Angriffsschutz einen „Freigeben"-Knopf anbieten (falls Selbst-Aussperrung).
+    // Vergleich über die stabile id — der NAME ist sprachübergreifend übersetzt
+    // („Attack protection" im EN-Modus) und würde den Knopf dort unsichtbar machen.
+    // Defensiv: Alte Backends ohne id-Feld — Fallback auf beide Namensvarianten,
+    // damit der Knopf dort wenigstens im deutschen Modus (und sauber übersetzt im
+    // englischen) erscheint statt gar nie.
+    const istAngriffsschutz = c.id === 'angriffsschutz'
+      || (!c.id && (c.name === 'Angriffsschutz' || c.name === 'Attack protection'));
+    if (istAngriffsschutz && c.status === 'err') {
       const ub = document.createElement('button');
       ub.className = 'btn ghost';
       ub.style.cssText = 'margin-top:10px;min-height:36px;font-size:.8rem;margin-left:34px';
@@ -2313,12 +2373,14 @@ async function loadBackup() {
   }
 }
 async function setupBackup() {
-  $('bsetup').disabled = true;
-  const r = await api('/ui/api/backup/setup', {method: 'POST'});
-  const j = await r.json();
-  if (!r.ok) { toast(j.error || t('Fehlgeschlagen'), false); return; }
-  // Passphrase EINMALIG zeigen — ohne sie ist jede Sicherung wertlos.
-  $('backupbody').innerHTML = `
+  const btn = $('bsetup');
+  btn.disabled = true;
+  try {
+    const r = await api('/ui/api/backup/setup', {method: 'POST'});
+    const j = await r.json();
+    if (!r.ok) { toast(j.error || t('Fehlgeschlagen'), false); return; }
+    // Passphrase EINMALIG zeigen — ohne sie ist jede Sicherung wertlos.
+    $('backupbody').innerHTML = `
     <div style="display:flex;gap:10px;align-items:flex-start">
       <svg class="ic" style="color:var(--amber);flex:none;margin-top:2px" viewBox="0 0 24 24"><use href="#i-alert"/></svg>
       <div style="min-width:0;flex:1">
@@ -2334,11 +2396,14 @@ async function setupBackup() {
                 data-act="backupconfirmed">${t('Habe ich gesichert — jetzt sichern')}</button>
       </div>
     </div>`;
-  $('ppval').textContent = j.passphrase;
-  $('ppcopy').onclick = async () => {
-    try { await navigator.clipboard.writeText(j.passphrase); toast(t('Passphrase kopiert')); }
-    catch { toast(t('Kopieren nicht möglich — bitte abschreiben'), false); }
-  };
+    $('ppval').textContent = j.passphrase;
+    $('ppcopy').onclick = async () => {
+      try { await navigator.clipboard.writeText(j.passphrase); toast(t('Passphrase kopiert')); }
+      catch { toast(t('Kopieren nicht möglich — bitte abschreiben'), false); }
+    };
+  /* finally statt nur Erfolgspfad: Nach einem Fehler (Netz, 5xx) muss der Knopf wieder
+     klickbar sein — im Erfolgsfall ist er durch den neuen Karten-Inhalt ohnehin ersetzt. */
+  } finally { btn.disabled = false; }
 }
 /* Token-Quelle: vorhandenes Vault-Secret ODER neue Eingabe */
 async function fillGitSecrets(selected) {
@@ -2347,7 +2412,7 @@ async function fillGitSecrets(selected) {
   let names = [];
   try { names = await holeJson('/ui/api/secrets'); } catch { return; }
   sel.innerHTML = `<option value="">${t('— neuen Token eingeben —')}</option>` +
-    names.map(n => `<option value="${n}" ${n === selected ? 'selected' : ''}>${t2('aus dem Vault: {name}', {name: n})}</option>`).join('');
+    names.map(n => `<option value="${escapeHtml(n)}" ${n === selected ? 'selected' : ''}>${escapeHtml(t2('aus dem Vault: {name}', {name: n}))}</option>`).join('');
   gitTokenSourceChanged();
 }
 function gitTokenSourceChanged() {
@@ -2423,11 +2488,8 @@ async function loadAudit() {
 /* ================= boot ================= */
 async function boot() {
   window.BOOTED = true;
-  // Auf dem zuletzt geöffneten Tab bleiben (z. B. nach Refresh oder PWA-Update):
-  // jeder Tab schreibt seinen Namen in den Hash (#mapping …); hier zurückholen,
-  // sofern das Panel existiert.
   const h = location.hash.slice(1);
-  if (h && document.getElementById('tab-' + h)) tab(h);
+  if (h === 'secrets' || h === 'audit') tab(h);
   try { await loadProjects(); } catch {}
   // Beim allerersten Login die Einführung zeigen (danach über „?" oben erreichbar)
   let toured = true;
@@ -2452,6 +2514,10 @@ window.addEventListener('unhandledrejection', e => {
   if (e.reason && e.reason.name === 'AbortError') return;
   // Diese drei behandeln wir bereits gezielt — kein doppeltes Banner.
   if (/unauthorized|locked|server error/.test(m)) return;
+  // api()/holeJson() haben für diesen Fehler schon eine verständliche Meldung gezeigt
+  // (Banner oder Toast) — die darf hier nicht mit Rohtext („Failed to fetch", „http 400")
+  // überschrieben werden. Nur wirklich UNBEHANDELTE Fälle bekommen das generische Banner.
+  if (e.reason && e.reason._gemeldet) return;
   if (m) showError(t2('Ein Fehler in der Oberfläche: {msg}', {msg: m}));
 });
 
@@ -2469,9 +2535,6 @@ const AKTIONEN = {
   theme: () => toggleTheme(),
   tour: () => startTour(),
   logout: () => logout(),
-  // Neu laden und dabei auf dem aktuellen Tab bleiben: der Tab steht im Hash (#…),
-  // boot() stellt ihn wieder her. /ui ist network-first -> holt die frische Version.
-  refresh: () => location.reload(),
   togglepw: el => togglePw(el.dataset.arg, el),
   report: () => showReport(),
   zoom: el => zoomBy(el.dataset.arg === 'in' ? 1.3 : 1 / 1.3),
@@ -2564,25 +2627,5 @@ regler.addEventListener('input', () => {
 
 /* PWA: Service Worker registrieren (cached nur statische Assets — nie /ui/api oder /mcp) */
 if ('serviceWorker' in navigator) {
-  // PWA-Selbstaktualisierung: der alte Fehler war, dass eine bereits geöffnete PWA
-  // NIE neu navigiert und darum ewig die alte Oberfläche zeigte. Jetzt: bei einer neuen,
-  // aktivierten SW-Version einmal frisch laden — nur bei einem echten Update (es gab schon
-  // einen Controller), nicht bei der Erstinstallation, und nur einmal (kein Reload-Loop).
-  // Der Tab bleibt erhalten (er steht im Hash, boot() holt ihn zurück).
-  let neuGeladen = false;
-  navigator.serviceWorker.register('/ui/sw.js').then((reg) => {
-    reg.addEventListener('updatefound', () => {
-      const warSchonKontrolliert = !!navigator.serviceWorker.controller;
-      const neu = reg.installing;
-      if (!neu || !warSchonKontrolliert) return;
-      neu.addEventListener('statechange', () => {
-        if (neu.state === 'activated' && !neuGeladen) { neuGeladen = true; location.reload(); }
-      });
-    });
-    // Beim Start und bei Rückkehr in den Vordergrund aktiv nach Updates schauen.
-    reg.update().catch(() => {});
-    document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible') reg.update().catch(() => {});
-    });
-  }).catch(() => {});
+  navigator.serviceWorker.register('/ui/sw.js').catch(() => {});
 }

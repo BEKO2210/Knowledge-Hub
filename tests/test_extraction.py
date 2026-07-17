@@ -20,12 +20,8 @@ class ZaehlenderFake:
     def __init__(self):
         self.calls = 0
 
-    def __call__(self, backend, model, key, system, user, limit=900, usage=None):
+    def __call__(self, backend, model, key, system, user, limit=900):
         self.calls += 1
-        if usage is not None:  # echtes llm.ask verbucht Tokens hier — der Fake auch
-            usage["in"] = usage.get("in", 0) + 10
-            usage["out"] = usage.get("out", 0) + 5
-            usage["calls"] = usage.get("calls", 0) + 1
         rel = user.split("\n", 1)[0].replace("Datei: ", "")
         return json.dumps(
             {

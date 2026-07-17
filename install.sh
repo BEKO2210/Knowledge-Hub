@@ -42,13 +42,23 @@ if ! command -v systemctl >/dev/null || ! systemctl --user show-environment >/de
 fi
 
 # --- 2. Virtuelle Umgebung + Abhängigkeiten ---------------------------------
-if [ ! -d "$HUB/.venv" ]; then
+# Ein defektes .venv (z. B. nach abgebrochener venv-Anlage: kein bin/python)
+# wird nicht übersprungen, sondern sauber neu angelegt.
+if [ ! -x "$HUB/.venv/bin/python" ]; then
+  if [ -d "$HUB/.venv" ]; then
+    c_warn "Defektes .venv gefunden (kein bin/python) — lege es neu an."
+    rm -rf "$HUB/.venv"
+  fi
   c_info "Lege virtuelle Umgebung an…"
   python3 -m venv "$HUB/.venv"
 fi
 c_info "Installiere Abhängigkeiten…"
-"$HUB/.venv/bin/pip" install -q --upgrade pip
+"$HUB/.venv/bin/pip" install -q --upgrade pip || c_warn "pip-Upgrade übersprungen (offline?)"
 "$HUB/.venv/bin/pip" install -q -r "$HUB/requirements.txt"
+# dev-Werkzeuge (ruff, pytest …): deploy.sh braucht sie auf diesem Host.
+if [ -f "$HUB/requirements-dev.txt" ]; then
+  "$HUB/.venv/bin/pip" install -q -r "$HUB/requirements-dev.txt"
+fi
 c_ok "Abhängigkeiten installiert"
 
 # --- 3. Konfiguration -------------------------------------------------------
@@ -64,12 +74,28 @@ else
   c_ok "Vorhandene Konfiguration behalten: $CFG_DIR/config.yaml"
 fi
 PORT=$("$HUB/.venv/bin/python" "$HUB/config.py" get server.port 2>/dev/null || echo "$PORT_DEFAULT")
+# server kann an eine andere Adresse als 127.0.0.1 binden (config.yaml server.host)
+HOST=$("$HUB/.venv/bin/python" "$HUB/config.py" get server.host 2>/dev/null || echo 127.0.0.1)
+case "$HOST" in 0.0.0.0|::|"") HOST=127.0.0.1 ;; esac
 
 # graphify: nötig fürs Mapping, aber keine harte Voraussetzung für den Server
 if ! command -v graphify >/dev/null && [ ! -x "$HOME/.local/bin/graphify" ]; then
   c_warn "graphify nicht gefunden — der Hub läuft, aber Projekte lassen sich noch nicht mappen."
   c_warn "Installation:  pipx install graphifyy   (oder: pip install --user graphifyy)"
 fi
+
+# --- 3b. Hilfswerkzeuge + Ausführbarkeit --------------------------------------
+# graphify-sync gehört zum Hub (kein PyPI-Paket), wird aber per Namen gesucht:
+# nach ~/.local/bin verlinken, damit PATH- und Standardpfad-Aufrufe greifen.
+mkdir -p "$HOME/.local/bin"
+ln -sf "$HUB/tools/graphify-sync" "$HOME/.local/bin/graphify-sync"
+# Alle Skripte ausführbar — sie werden direkt per Pfad gestartet (systemd-Units,
+# nightly-map.sh und server.py rufen tools/* ohne Interpreter-Präfix auf).
+chmod +x "$HUB/install.sh" "$HUB/deploy.sh" "$HUB/nightly-map.sh" \
+  "$HUB/docker-entrypoint.sh" \
+  "$HUB/tools/graphify-sync" "$HUB/tools/graphify-cluster-force" \
+  "$HUB/bluegreen/switch.sh" "$HUB/bluegreen/make-release-manifest.sh"
+c_ok "graphify-sync nach ~/.local/bin verlinkt, Skripte ausführbar"
 
 # --- 4. systemd-Dienste -----------------------------------------------------
 if [ -z "${NO_SYSTEMD:-}" ]; then
@@ -97,13 +123,15 @@ Description=Knowledge Hub — nächtliches Deep-Mapping
 
 [Service]
 Type=oneshot
+# LLM-Mapping läuft Minuten bis Stunden — den 90s-Start-Timeout abschalten,
+# sonst killt systemd jeden Nachtlauf (DefaultTimeoutStartSec=90s).
+TimeoutStartSec=infinity
 ExecStart=$HUB/nightly-map.sh
 Nice=10
 IOSchedulingClass=idle
 EOF
 
-  if [ ! -f "$UNIT_DIR/nightly-map.timer" ]; then
-    cat > "$UNIT_DIR/nightly-map.timer" <<'EOF'
+  cat > "$UNIT_DIR/nightly-map.timer" <<'EOF'
 [Unit]
 Description=Startet das nächtliche Deep-Mapping um 03:30
 
@@ -115,9 +143,7 @@ RandomizedDelaySec=600
 [Install]
 WantedBy=timers.target
 EOF
-  fi
 
-  chmod +x "$HUB/nightly-map.sh"
   systemctl --user daemon-reload
   if systemctl --user enable --now knowledge-mcp.service >/dev/null 2>&1; then
     c_ok "Dienst knowledge-mcp gestartet (Port $PORT)"
@@ -143,7 +169,7 @@ if [ -n "$NO_SYSTEMD" ]; then
   echo "    Server starten:"
   echo "      cd $HUB && .venv/bin/python server.py"
   echo
-  echo "    Danach im Browser einrichten:  http://127.0.0.1:$PORT/ui"
+  echo "    Danach im Browser einrichten:  http://$HOST:$PORT/ui"
   echo "    (Für automatischen Start empfiehlt sich Docker: docker compose up -d)"
   echo
   exit 0
@@ -151,27 +177,27 @@ fi
 
 # --- 6. Bereitschaft prüfen -------------------------------------------------
 for _ in $(seq 1 20); do
-  curl -sf -m 2 "http://127.0.0.1:$PORT/ui/setup/status" >/dev/null && break
+  curl -sf -m 2 "http://$HOST:$PORT/ui/setup/status" >/dev/null && break
   sleep 0.5
 done
 
-if curl -sf -m 2 "http://127.0.0.1:$PORT/ui/setup/status" | grep -q '"configured":true'; then
+if curl -sf -m 2 "http://$HOST:$PORT/ui/setup/status" | grep -q '"configured":true'; then
   echo
   c_ok "Knowledge Hub läuft und ist bereits eingerichtet."
   echo
-  echo "    Öffnen:  http://127.0.0.1:$PORT/ui"
+  echo "    Öffnen:  http://$HOST:$PORT/ui"
   echo
-elif curl -sf -m 2 "http://127.0.0.1:$PORT/ui/setup/status" >/dev/null 2>&1; then
+elif curl -sf -m 2 "http://$HOST:$PORT/ui/setup/status" >/dev/null 2>&1; then
   echo
   c_ok "Fertig! Jetzt im Browser einrichten:"
   echo
-  echo "    →  http://127.0.0.1:$PORT/ui"
+  echo "    →  http://$HOST:$PORT/ui"
   echo
   echo "    Der Assistent fragt nur nach einem Zugangspasswort;"
   echo "    Vault-Schlüssel und API-Token werden automatisch erzeugt."
   echo
   echo "    Von außen erreichbar machen (optional): Reverse-Proxy oder"
-  echo "    Cloudflare Tunnel auf 127.0.0.1:$PORT, danach die öffentliche"
+  echo "    Cloudflare Tunnel auf $HOST:$PORT, danach die öffentliche"
   echo "    Adresse in $CFG_DIR/config.yaml unter server.public_url eintragen."
   echo
 else

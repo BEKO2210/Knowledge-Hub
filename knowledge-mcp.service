@@ -1,11 +1,20 @@
+# Vorlage für ~/.config/systemd/user/knowledge-mcp.service — NUR nativer Betrieb.
+# Im Docker-/Compose-Betrieb ist diese Unit wirkungslos (kein systemd im Image):
+# dort überwacht Docker den Container selbst (restart: unless-stopped).
+#
+# HINWEIS: install.sh erzeugt diese Unit automatisch mit den echten Pfaden —
+# bei manueller Installation Pfade unten an den Klon-Ort anpassen
+# (hier die README-Variante: git clone <repo> && cd Knowledge-Hub, also ~/Knowledge-Hub).
+# Das `-` vor EnvironmentFile ist Absicht: die env-Datei legt erst der
+# Setup-Wizard im Browser an — ohne `-` schlägt der Erststart fehl.
 [Unit]
 Description=Knowledge MCP Hub (graphify + secrets vault, port 8300)
 After=network.target
 
 [Service]
-EnvironmentFile=%h/.config/knowledge-mcp/env
-WorkingDirectory=%h/knowledge-mcp
-ExecStart=%h/knowledge-mcp/.venv/bin/python server.py
+EnvironmentFile=-%h/.config/knowledge-mcp/env
+WorkingDirectory=%h/Knowledge-Hub
+ExecStart=%h/Knowledge-Hub/.venv/bin/python server.py
 Restart=always
 RestartSec=5
 

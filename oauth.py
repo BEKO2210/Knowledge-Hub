@@ -16,6 +16,7 @@ a leaked state file does not leak usable tokens.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -23,11 +24,14 @@ import html
 import json
 import os
 import secrets
+import tempfile
 import time
 from pathlib import Path
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 from starlette.applications import Starlette
+from starlette.middleware import Middleware
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
 from starlette.routing import Route
@@ -54,8 +58,43 @@ def _now() -> int:
     return int(time.time())
 
 
+def _write_atomic(state: dict) -> None:
+    """Zustand atomar und von Anfang an mit Modus 0600 schreiben.
+
+    write_text()+chmod() hatte zwei Lücken: ein Crash mitten im Schreiben hinterließ
+    eine halbe Datei (die danach JEDE Anfrage mit 500 beantwortete), und bei der
+    Erstanlage war die Datei bis zum chmod kurz für andere lesbar. mkstemp legt mit
+    0600 an, os.replace macht den Tausch untrennbar (Muster wie vault._write_file).
+    """
+    fd, tmp = tempfile.mkstemp(dir=STATE_FILE.parent, prefix=".oauth-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(state, indent=2))
+        os.replace(tmp, STATE_FILE)
+    except OSError:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+
+
 def _load() -> dict:
-    state = json.loads(STATE_FILE.read_text()) if STATE_FILE.exists() else {}
+    state: dict = {}
+    if STATE_FILE.exists():
+        try:
+            geladen = json.loads(STATE_FILE.read_text())
+            if not isinstance(geladen, dict):
+                raise ValueError("oauth_state.json ist kein JSON-Objekt")
+            buckets = ("clients", "codes", "tokens", "refresh")
+            if any(k in geladen and not isinstance(geladen[k], dict) for k in buckets):
+                raise ValueError("oauth_state.json hat falsch typisierte Abschnitte")
+            state = geladen
+        except (OSError, ValueError):
+            # Kaputte bzw. halb geschriebene Datei (Crash mitten im Schreiben) darf
+            # nicht die komplette Anmeldung lahmlegen: quarantänisieren und mit
+            # leerem Zustand weiter — Clients melden sich dann einfach neu an.
+            try:
+                STATE_FILE.replace(STATE_FILE.with_name(STATE_FILE.name + ".korrupt"))
+            except OSError:
+                pass
     state.setdefault("clients", {})
     state.setdefault("codes", {})
     state.setdefault("tokens", {})
@@ -75,8 +114,7 @@ def _migrate(state: dict) -> None:
                 entry.setdefault("created", entry.get("exp", _now()) - ACCESS_TTL)
                 changed = True
     if changed:
-        STATE_FILE.write_text(json.dumps(state, indent=2))
-        STATE_FILE.chmod(0o600)
+        _write_atomic(state)
 
 
 def _save(state: dict) -> None:
@@ -84,8 +122,7 @@ def _save(state: dict) -> None:
     state["codes"] = {k: v for k, v in state["codes"].items() if v["exp"] > now}
     state["tokens"] = {k: v for k, v in state["tokens"].items() if v["exp"] > now}
     state["refresh"] = {k: v for k, v in state["refresh"].items() if v["exp"] > now}
-    STATE_FILE.write_text(json.dumps(state, indent=2))
-    STATE_FILE.chmod(0o600)
+    _write_atomic(state)
 
 
 SEEN_THROTTLE = 300  # "zuletzt gesehen" höchstens alle 5 Minuten schreiben
@@ -237,6 +274,24 @@ def _prune_clients(state: dict) -> None:
         del state["clients"][orphans.pop(0)]
 
 
+def _redirect_uri_ok(uri: str) -> bool:
+    """https überall erlaubt, http nur auf echtem Loopback (localhost/127.0.0.1).
+
+    Der frühere Präfix-Check ließ sich austricksen: http://localhost@evil.com
+    (Host ist evil.com), http://localhost.evil.com und http://127.0.0.1.evil.com
+    begannen alle mit dem harmlosen Präfix. Deshalb strikt per urlparse prüfen —
+    hostname ignoriert Userinfo, Suffixe und Groß-/Kleinschreibung.
+    """
+    try:
+        p = urlparse(uri)
+        host = p.hostname
+    except ValueError:
+        return False
+    if p.scheme == "https":
+        return bool(host)
+    return p.scheme == "http" and host in ("localhost", "127.0.0.1")
+
+
 async def _register(request: Request) -> JSONResponse:
     import ratelimit
 
@@ -258,16 +313,7 @@ async def _register(request: Request) -> JSONResponse:
         not isinstance(redirect_uris, list)
         or not redirect_uris
         or len(redirect_uris) > 10
-        or not all(
-            isinstance(u, str)
-            and len(u) <= 2048
-            and (
-                u.startswith("https://")
-                or u.startswith("http://localhost")
-                or u.startswith("http://127.0.0.1")
-            )
-            for u in redirect_uris
-        )
+        or not all(isinstance(u, str) and len(u) <= 2048 and _redirect_uri_ok(u) for u in redirect_uris)
     ):
         return JSONResponse({"error": "invalid_redirect_uri"}, status_code=400)
     state = _load()
@@ -304,18 +350,34 @@ _PAGE = """<!doctype html><html lang="de"><head><meta charset="utf-8">
       min-height:100vh;align-items:center;justify-content:center;margin:0}}
  form{{background:#1a2233;padding:2rem;border-radius:12px;max-width:22rem;width:90%}}
  h1{{font-size:1.1rem;margin:0 0 .4rem}} p{{color:#9aa7bd;font-size:.85rem;margin:.2rem 0 1rem}}
- input[type=password]{{width:100%;padding:.6rem;border-radius:8px;border:1px solid #3a4660;
-      background:#0f1420;color:#e8ecf3;font-size:1rem;box-sizing:border-box}}
+ input[type=password],input[type=text]{{width:100%;padding:.6rem;border-radius:8px;
+      border:1px solid #3a4660;background:#0f1420;color:#e8ecf3;font-size:1rem;
+      box-sizing:border-box;margin-top:.5rem}}
  button{{width:100%;margin-top:1rem;padding:.65rem;border:0;border-radius:8px;
       background:#4f7cff;color:#fff;font-size:1rem;cursor:pointer}}
  .err{{color:#ff7a7a;font-size:.85rem}}
+ .ziel{{background:#0f1420;border:1px solid #3a4660;border-radius:8px;padding:.55rem .7rem;
+      font-size:.85rem;margin:.6rem 0;word-break:break-all}}
+ .ziel b{{color:#8fb0ff}}
+ .cid{{color:#9aa7bd;font-size:.75rem;word-break:break-all}}
 </style></head><body><form method="post" action="/oauth/authorize">
 <h1>Knowledge MCP Hub</h1>
 <p><b>{client}</b> möchte auf deinen Knowledge-Server zugreifen (Graphify-Graphen&nbsp;+ Secrets-Vault).</p>
+<div class="ziel">Der Anmeldecode geht nach der Anmeldung an:<br><b>{host}</b></div>
+<p class="cid">Anfragende Client-ID: {client_id}<br>Gib dein Passwort nur ein, wenn Ziel und Client
+genau dem Dienst entsprechen, den du gerade selbst verbinden willst.</p>
 {error}
 <input type="password" name="password" placeholder="Zugangspasswort" autofocus required>
+{totp}
 {hidden}
 <button type="submit">Zugriff erlauben</button></form></body></html>"""
+
+# Zweiter Faktor auf der Consent-Seite: nur sichtbar, wenn 2FA aktiviert ist.
+# Akzeptiert wird der 6-stellige TOTP-Code oder ein Wiederherstellungscode.
+_TOTP_FELD = (
+    '<input type="text" name="code" inputmode="numeric" autocomplete="one-time-code" '
+    'placeholder="2FA-Code (6-stellig oder Wiederherstellungscode)" required>'
+)
 
 
 def _password_ok(password: str) -> bool:
@@ -328,7 +390,15 @@ def _password_ok(password: str) -> bool:
 
     if _vault.status().get("has_password"):
         return _vault.unlock(password)
-    return bool(OAUTH_PASSWORD) and hmac.compare_digest(password, OAUTH_PASSWORD)
+    # Byteweise vergleichen: compare_digest wirft auf str mit Nicht-ASCII-Zeichen
+    # (Umlaute im eingegebenen Passwort) einen TypeError — das wurde ein 500 statt
+    # „falsches Passwort", und der Fehlversuch wäre nie gezählt worden.
+    try:
+        return bool(OAUTH_PASSWORD) and hmac.compare_digest(
+            password.encode("utf-8"), OAUTH_PASSWORD.encode("utf-8")
+        )
+    except UnicodeError:
+        return False
 
 
 def _authorize_checks(state: dict, params) -> tuple[dict | None, str | None]:
@@ -342,6 +412,26 @@ def _authorize_checks(state: dict, params) -> tuple[dict | None, str | None]:
     if not params.get("code_challenge") or params.get("code_challenge_method") != "S256":
         return None, "PKCE with S256 is required"
     return client, None
+
+
+async def _zweiter_faktor_aktiv() -> bool:
+    """Ist 2FA eingeschaltet? (Vault-Zugriff, deshalb im Thread.)
+
+    VaultLocked → False: Dann ist der 2FA-Zustand schlicht unlesbar. Auf dem
+    Consent-POST passiert das nur, wenn die Passwortprüfung über den alten
+    Klartext-Fallback lief (Vault ohne Passwort-Verpackung) — und auf so einem
+    Hub kann 2FA nie eingerichtet worden sein (das Setup braucht den entsperrten
+    Vault). Auf dem GET ist der Vault vor der ersten Anmeldung typischerweise
+    gesperrt; dann zeigt das Formular das Code-Feld eben erst nach dem ersten
+    Absenden — geprüft wird auf dem POST in jedem Fall verbindlich.
+    """
+    import totp
+    import vault as _v
+
+    try:
+        return await asyncio.to_thread(totp.is_enabled)
+    except _v.VaultLocked:
+        return False
 
 
 async def _authorize(request: Request):
@@ -364,7 +454,24 @@ async def _authorize(request: Request):
                 "<h3>Zu viele Fehlversuche</h3><p>Bitte 15 Minuten warten.</p>", status_code=429
             )
         password = str(params.get("password", ""))
-        if _password_ok(password):
+        # scrypt (Vault-Entpackung) ist absichtlich langsam — im Thread rechnen,
+        # sonst friert jeder Consent-POST die ganze Event-Loop ein.
+        ok = await asyncio.to_thread(_password_ok, password)
+        fehlertext = "Falsches Passwort."
+        fehlversuch = True  # für die 5/15-min-Sperre zählen?
+        if ok and await _zweiter_faktor_aktiv():
+            # Bei aktivem 2FA reicht das Passwort allein NIE — ohne gültigen
+            # TOTP-/Wiederherstellungscode wird kein Anmeldecode ausgestellt.
+            import totp
+
+            code = str(params.get("code", "")).strip()
+            if not code:
+                # Passwort stimmt schon, es fehlt nur der zweite Faktor — das ist
+                # (wie beim UI-Login) kein Fehlversuch und wird nicht gezählt.
+                ok, fehlertext, fehlversuch = False, "Bitte auch den 2FA-Code eingeben.", False
+            elif not await asyncio.to_thread(totp.check, code):
+                ok, fehlertext = False, "2FA-Code stimmt nicht."
+        if ok:
             code = secrets.token_urlsafe(32)
             state["codes"][_sha(code)] = {
                 "client_id": params["client_id"],
@@ -377,11 +484,12 @@ async def _authorize(request: Request):
             sep = "&" if "?" in params["redirect_uri"] else "?"
             qs = urlencode({"code": code, **({"state": params["state"]} if params.get("state") else {})})
             return RedirectResponse(f"{params['redirect_uri']}{sep}{qs}", status_code=302)
-        import vault as _v
+        if fehlversuch:
+            import vault as _v
 
-        ratelimit.record_failure("login", ip)
-        _v.audit("LOGIN-FAIL", f"{ip} (oauth)", client="oauth")
-        error_html = '<p class="err">Falsches Passwort.</p>'
+            ratelimit.record_failure("login", ip)
+            _v.audit("LOGIN-FAIL", f"{ip} (oauth)", client="oauth")
+        error_html = f'<p class="err">{fehlertext}</p>'
 
     hidden = "".join(
         f'<input type="hidden" name="{k}" value="{html.escape(str(params.get(k, "")), quote=True)}">'
@@ -397,10 +505,17 @@ async def _authorize(request: Request):
         )
         if params.get(k)
     )
+    try:
+        ziel_host = urlparse(str(params.get("redirect_uri", ""))).netloc
+    except ValueError:
+        ziel_host = ""
     return HTMLResponse(
         _PAGE.format(
             client=html.escape(client["name"] or "Ein MCP-Client"),
+            host=html.escape(ziel_host or str(params.get("redirect_uri", "")), quote=True),
+            client_id=html.escape(str(params.get("client_id", "")), quote=True),
             error=error_html,
+            totp=_TOTP_FELD if await _zweiter_faktor_aktiv() else "",
             hidden=hidden,
         )
     )
@@ -435,33 +550,60 @@ def _issue(state: dict, client_id: str, sid: str = "", user_agent: str = "") -> 
     }
 
 
+def _token_json(payload: dict, status_code: int = 200) -> JSONResponse:
+    """Antwort des Token-Endpunkts: darf nirgends zwischengespeichert werden
+    (RFC 6749 §5.1) — weder im Browser noch auf einem Proxy dazwischen."""
+    return JSONResponse(
+        payload,
+        status_code=status_code,
+        headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
+    )
+
+
 async def _token(request: Request) -> JSONResponse:
+    import ratelimit
+
+    # Drossel gegen Code-/Refresh-Raten (abgemildert durch PKCE + Einmalnutzung,
+    # aber RFC 6819 empfiehlt Throttling trotzdem) — wie bei /oauth/register.
+    ip = request.headers.get("cf-connecting-ip") or (request.client.host if request.client else "?")
+    erlaubt, _ = ratelimit.throttle("token", ip)
+    if not erlaubt:
+        return _token_json(
+            {"error": "temporarily_unavailable", "error_description": "too many requests"},
+            status_code=429,
+        )
     form = await request.form()
     grant = form.get("grant_type")
     state = _load()
 
     if grant == "authorization_code":
         entry = state["codes"].pop(_sha(str(form.get("code", ""))), None)
+        if entry is not None:
+            # Der Code ist mit DIESEM Versuch verbraucht — auch wenn der Tausch
+            # danach noch scheitert (falscher Verifier, client_id-/redirect-Mismatch).
+            # Sonst ließe sich der PKCE-Verifier innerhalb der 5-min-TTL unbegrenzt
+            # raten (RFC 6749 §4.1.2: Codes sind einmalig).
+            _save(state)
         if entry is None or entry["exp"] < _now():
-            return JSONResponse({"error": "invalid_grant"}, status_code=400)
+            return _token_json({"error": "invalid_grant"}, status_code=400)
         if form.get("client_id") != entry["client_id"] or form.get("redirect_uri") != entry["redirect_uri"]:
-            return JSONResponse({"error": "invalid_grant"}, status_code=400)
+            return _token_json({"error": "invalid_grant"}, status_code=400)
         verifier = str(form.get("code_verifier", ""))
         expected = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
         if not hmac.compare_digest(expected, entry["code_challenge"]):
-            return JSONResponse(
+            return _token_json(
                 {"error": "invalid_grant", "error_description": "PKCE failed"}, status_code=400
             )
         ua = request.headers.get("user-agent", "")
         payload = _issue(state, entry["client_id"], user_agent=ua)
         _save(state)
-        return JSONResponse(payload)
+        return _token_json(payload)
 
     if grant == "refresh_token":
         key = _sha(str(form.get("refresh_token", "")))
         entry = state["refresh"].pop(key, None)  # Rotation: altes Refresh-Token stirbt
         if entry is None or entry["exp"] < _now():
-            return JSONResponse({"error": "invalid_grant"}, status_code=400)
+            return _token_json({"error": "invalid_grant"}, status_code=400)
         # Sitzung bleibt dieselbe -> das Gerät behält seinen Eintrag in der Liste
         payload = _issue(
             state,
@@ -470,12 +612,36 @@ async def _token(request: Request) -> JSONResponse:
             user_agent=request.headers.get("user-agent", ""),
         )
         _save(state)
-        return JSONResponse(payload)
+        return _token_json(payload)
 
-    return JSONResponse({"error": "unsupported_grant_type"}, status_code=400)
+    return _token_json({"error": "unsupported_grant_type"}, status_code=400)
+
+
+class _SecurityHeaders(BaseHTTPMiddleware):
+    """Schutz-Header für ALLE /oauth-Antworten (Consent, Token, Discovery, Fehler).
+
+    Die Consent-Seite nimmt das Zugangspasswort entgegen und ist sessionlos per
+    Form-POST erreichbar — ohne frame-ancestors/X-Frame-Options wäre sie per
+    Iframe clickjacking-bar. Die Seite kommt ohne ein einziges Skript aus (nur
+    Inline-Style), darum darf die CSP hier noch strenger sein als die der UI.
+    """
+
+    async def dispatch(self, request, call_next):
+        resp = await call_next(request)
+        resp.headers.setdefault(
+            "Content-Security-Policy",
+            "default-src 'none'; style-src 'unsafe-inline'; "
+            "frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+        )
+        resp.headers["X-Content-Type-Options"] = "nosniff"
+        resp.headers["X-Frame-Options"] = "DENY"
+        resp.headers["Referrer-Policy"] = "no-referrer"
+        resp.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+        return resp
 
 
 oauth_app = Starlette(
+    middleware=[Middleware(_SecurityHeaders)],
     routes=[
         Route("/.well-known/oauth-authorization-server", _as_metadata),
         Route("/.well-known/oauth-authorization-server/{path:path}", _as_metadata),

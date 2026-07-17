@@ -1,24 +1,56 @@
 # NIEMALS ins Image: Secrets, Zustand und lokale Daten.
 # (Ohne diese Datei landen Vault und OAuth-Tokens im Container-Image!)
+# Hinweis: Docker-Muster ohne ** treffen nur die Kontext-Wurzel — deshalb
+# überall verschachtelungssichere Muster verwenden.
 vault.enc
-vault.enc.tmp
+vault.enc.*
+vault.lock
+.vault-*.tmp
 oauth_state.json
 audit.log
 env
 .env
+.env.*
+**/.env
+**/.env.*
 *.key
 *.pem
+**/*.key
+**/*.pem
 
 # Laufzeit-Daten (gehören ins Volume, nicht ins Image)
 build-logs/
 graphify-out/
 data/
 projects/
+backups/
+backup-repo/
+answers/
+chunk-index/
+*.khub
+*.tmp
+errors.log*
+errors_ack.json
+ratelimit.json
+mapping_dismissed.json
+config.yaml
+
+# Interne Arbeits-/Planungsartefakte — gehören nicht ins Kunden-Image
+plan.md
+.firma/
 
 # Lokale Entwicklungs-Artefakte
 .venv/
-__pycache__/
-*.pyc
+.pypackages/
+**/__pycache__/
+**/*.pyc
+.pytest_cache/
+.ruff_cache/
+.coverage
 .git/
 .gitignore
-ratelimit.json
+tests/
+docs/
+.github/
+node_modules/
+.DS_Store

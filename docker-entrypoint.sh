@@ -8,6 +8,10 @@ if [ ! -f /data/config.yaml ] && [ -f /app/config.example.yaml ]; then
   echo "[hub] Standard-Konfiguration nach /data/config.yaml gelegt"
 fi
 
+# Wissenswurzel + Notizen auf frischem Volume anlegen — sonst liefern die
+# Projekt-/Notiz-Endpunkte bis zum ersten Build FileNotFoundError.
+mkdir -p "${KNOWLEDGE_ROOT:-/data/graphify-knowledge}" "${KMCP_NOTES_ROOT:-/data/knowledge-notes}"
+
 # Secrets aus dem Volume in die Prozess-Umgebung laden (bei systemd macht das
 # EnvironmentFile). Ohne das kennt der Server nach einem Neustart weder
 # Vault-Schlüssel noch Zugangspasswort.

@@ -5,9 +5,9 @@
 <meta name="description" content="Self-hosted knowledge hub: project knowledge graphs, hybrid semantic search and an encrypted secrets vault — with an MCP interface for AI assistants.">
 <meta name="robots" content="noindex">
 <meta name="theme-color" content="#0e1526">
-<link rel="icon" type="image/png" href="/ui/static/favicon.png">
-<link rel="apple-touch-icon" href="/ui/static/icon-192.png">
-<link rel="manifest" href="/ui/manifest.json">
+<link rel="icon" type="image/png" href="/ui/static/favicon.png?v=__V__">
+<link rel="apple-touch-icon" href="/ui/static/icon-192.png?v=__V__">
+<link rel="manifest" href="/ui/manifest.json?v=__V__">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -88,18 +88,21 @@
 </div>
 
 <header>
-  <div class="logo"><img src="/ui/static/icon-192.png?v=__V__" alt="" width="30" height="30" style="border-radius:8px"><span class="brandtext">__BRAND_HTML__</span></div>
+  <!-- Die Wortmarke ist zugleich die (einzige) h1 der Seite — bisher gab es keine
+       Seitenüberschrift, das Dokument begann mit h2. CSS setzt die UA-Styles zurück. -->
+  <div class="logo"><img src="/ui/static/icon-192.png?v=__V__" alt="" width="30" height="30" style="border-radius:8px"><h1 class="brandtext">__BRAND_HTML__</h1></div>
   <nav class="desktop" aria-label="Hauptnavigation" data-en-title="Main navigation">
     <button data-tab="graph" class="on" data-act="tab" data-arg="graph"><svg class="ic" viewBox="0 0 24 24"><use href="#i-graph"/></svg><span data-en="Graphs">Graphen</span></button>
     <button data-tab="ask" data-act="tab" data-arg="ask"><svg class="ic" viewBox="0 0 24 24"><use href="#i-spark"/></svg><span data-en="Ask">Fragen</span></button>
-    <button data-tab="projekte" data-act="tab" data-arg="projekte"><svg class="ic" viewBox="0 0 24 24"><use href="#i-graph"/></svg><span data-en="Projects">Projekte</span></button>
+    <button data-tab="secrets" data-act="tab" data-arg="secrets"><svg class="ic" viewBox="0 0 24 24"><use href="#i-key"/></svg><span data-en="Secrets">Secrets</span></button>
     <button data-tab="mapping" data-act="tab" data-arg="mapping"><svg class="ic" viewBox="0 0 24 24"><use href="#i-moon"/></svg><span data-en="Mapping">Mapping</span></button>
+    <button data-tab="connect" data-act="tab" data-arg="connect"><svg class="ic" viewBox="0 0 24 24"><use href="#i-link"/></svg><span data-en="Connect">Verbinden</span></button>
     <button id="navmore" data-act="more" aria-haspopup="dialog"><svg class="ic" viewBox="0 0 24 24"><use href="#i-more"/></svg><span data-en="More">Mehr</span></button>
   </nav>
   <button id="langbtn" data-act="lang" aria-label="Sprache umschalten" title="Sprache / Language" data-en-title="Switch language">EN</button>
   <button id="themebtn" data-act="theme" aria-label="Design umschalten" title="Hell/Dunkel" data-en-title="Light / dark"><svg class="ic" viewBox="0 0 24 24"><use href="#i-moon"/></svg></button>
   <button id="helpbtn" data-act="tour" aria-label="Hilfe & Einführung" title="Hilfe & Einführung" data-en-title="Help &amp; tour"><svg class="ic" viewBox="0 0 24 24"><use href="#i-help"/></svg></button>
-  <button id="refreshbtn" data-act="refresh" aria-label="Aktualisieren" title="Aktualisieren" data-en-title="Refresh"><svg class="ic" viewBox="0 0 24 24"><use href="#i-refresh"/></svg></button>
+  <button id="logoutbtn" data-act="logout" aria-label="Abmelden" data-en-title="Sign out"><svg class="ic" viewBox="0 0 24 24"><use href="#i-logout"/></svg><span data-en="Sign out">Abmelden</span></button>
 </header>
 
 <main>
@@ -111,7 +114,8 @@
       <div class="searchwrap">
         <svg class="ic" viewBox="0 0 24 24"><use href="#i-search"/></svg>
         <input id="search" placeholder="Knoten suchen…" data-en-ph="Search nodes…" data-bind="search"
-               autocomplete="off" role="combobox" aria-expanded="false" aria-controls="searchdrop">
+               autocomplete="off" role="combobox" aria-expanded="false" aria-controls="searchdrop"
+               aria-label="Knoten suchen" data-en-title="Search nodes">
       </div>
       <div id="limitwrap"><span id="limlbl">2000</span>
         <input type="range" id="limit" min="100" max="2000" step="50" value="2000" aria-label="Anzahl Knoten" data-en-title="Number of nodes"
@@ -146,11 +150,13 @@
         </div>
         <span id="hint" data-en="Drag to pan · Scroll to zoom · Click a node for details">Ziehen zum Verschieben · Scrollen zum Zoomen · Klick auf Knoten für Details</span>
         <div id="legend" class="hidden">
-          <div id="legendhead" data-act="legend">
+          <!-- Nativer Button statt klickbarem div: Tastatur (Enter/Space) feuert click
+               genauso — der data-act-Delegationshandler in app.js läuft unverändert. -->
+          <button id="legendhead" data-act="legend" type="button">
             <svg class="ic" style="width:16px;height:16px;color:var(--acc)" viewBox="0 0 24 24"><use href="#i-graph"/></svg>
             <span data-en="Clusters">Bereiche</span>
             <svg class="ic caret" style="width:16px;height:16px" viewBox="0 0 24 24"><use href="#i-back"/></svg>
-          </div>
+          </button>
           <div id="legendbody"></div>
         </div>
       </div>
@@ -252,34 +258,6 @@
   </div></section>
 
   <!-- MAPPING -->
-  <!-- PROJEKTE -->
-  <section class="tab" id="tab-projekte" aria-label="Projekte" data-en-title="Projects"><div class="pad">
-    <div style="max-width:44rem;margin:0 auto">
-      <div class="pagehead"><svg class="ic" width="22" height="22" viewBox="0 0 24 24"><use href="#i-graph"/></svg><h2 data-en="Projects">Projekte</h2></div>
-      <p class="pagesub" data-en="The projects the hub turns into knowledge graphs. Add a folder, exclude files via .graphifyignore, repair a project, and manage the graph inventory.">Die Projekte, aus denen der Hub Wissensgraphen baut. Ordner hinzufügen, Dateien per .graphifyignore ausschließen, ein Projekt reparieren und den Graph-Bestand verwalten.</p>
-
-      <div class="card" style="margin-bottom:var(--sp-3)">
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:var(--sp-3);color:var(--mut);font-size:.85rem">
-          <svg class="ic" viewBox="0 0 24 24"><use href="#i-graph"/></svg><span data-en="Projects">Projekte</span>
-          <button class="btn ghost" style="margin-left:auto;min-height:38px;font-size:.82rem;padding:6px 12px" data-act="picker">
-            <svg class="ic" style="width:16px;height:16px" viewBox="0 0 24 24"><use href="#i-plus"/></svg><span data-en="Add">Hinzufügen</span></button>
-        </div>
-        <div id="projlist" style="display:flex;flex-direction:column;gap:var(--sp-2)"></div>
-      </div>
-
-      <div class="card" id="graphstockcard" style="margin-bottom:var(--sp-3);display:none">
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:var(--sp-3);color:var(--mut);font-size:.85rem">
-          <svg class="ic" viewBox="0 0 24 24"><use href="#i-graph"/></svg><span data-en="Graph inventory">Graph-Bestand</span></div>
-        <p style="color:var(--mut2);font-size:.78rem;line-height:1.55;margin:0 0 var(--sp-3)" data-en="Every graph must belong to a registered project. Anything listed here needs a decision: register the source folder as a project, keep the graph as documented archive material, or remove it completely. Source folders are never touched.">
-          Jeder Graph gehört zu einem registrierten Projekt. Was hier steht, braucht eine Entscheidung:
-          Quellordner als Projekt registrieren, den Graphen als dokumentiertes Archiv behalten oder
-          vollständig entfernen. Quellordner werden dabei nie angefasst.</p>
-        <div id="graphstock" style="display:flex;flex-direction:column;gap:var(--sp-2)"></div>
-      </div>
-    </div>
-  </div></section>
-
-  <!-- MAPPING -->
   <section class="tab" id="tab-mapping" aria-label="Nacht-Mapping" data-en-title="Nightly mapping"><div class="pad">
     <div style="max-width:44rem;margin:0 auto">
       <div class="pagehead"><svg class="ic" width="22" height="22" viewBox="0 0 24 24"><use href="#i-moon"/></svg><h2 data-en="Nightly mapping">Nacht-Mapping</h2></div>
@@ -302,7 +280,8 @@
               </p>
               <form style="display:flex;gap:var(--sp-2);flex-wrap:wrap" data-form="apikey">
                 <div class="pwwrap" style="flex:1;min-width:14rem">
-                  <input type="password" id="apikey" placeholder="API-Key einfügen…" data-en-ph="Paste API key…" autocomplete="off" required>
+                  <input type="password" id="apikey" placeholder="API-Key einfügen…" data-en-ph="Paste API key…" autocomplete="off" required
+                         aria-label="API-Key" data-en-title="API key">
                   <button type="button" aria-label="Key anzeigen" data-en-title="Show key" data-act="togglepw" data-arg="apikey"><svg class="ic" viewBox="0 0 24 24"><use href="#i-eye"/></svg></button>
                 </div>
                 <button class="btn" id="keysave"><svg class="ic" viewBox="0 0 24 24"><use href="#i-key"/></svg><span data-en="Save key">Key speichern</span></button>
@@ -320,7 +299,8 @@
       <div class="card" style="margin-bottom:var(--sp-3)">
         <div style="display:flex;align-items:center;gap:var(--sp-3)">
           <label class="switch">
-            <input type="checkbox" id="maptoggle" data-change="maptoggle">
+            <input type="checkbox" id="maptoggle" data-change="maptoggle"
+                   aria-label="Nacht-Mapping-Automatik" data-en-title="Nightly mapping">
             <span class="slider"></span>
           </label>
           <div style="flex:1;min-width:0">
@@ -358,12 +338,32 @@
             <label for="mapmodel" style="font-size:.8rem;color:var(--mut);display:block;margin-bottom:5px" data-en="Model">Modell</label>
             <select id="mapmodel" data-change="model" style="text-overflow:ellipsis"></select>
             <input id="mapmodelcustom" placeholder="eigenes Modell, z. B. gpt-5" data-en-ph="custom model, e.g. gpt-5" style="margin-top:var(--sp-2);display:none"
-                   autocomplete="off" autocapitalize="off" spellcheck="false">
+                   autocomplete="off" autocapitalize="off" spellcheck="false"
+                   aria-label="Eigenes Modell" data-en-title="Custom model">
           </div>
         </div>
         <p id="backendnote" style="color:var(--mut2);font-size:.78rem;margin:var(--sp-3) 0 0;line-height:1.5"></p>
         <button class="btn" style="margin-top:var(--sp-3)" id="mapsave" data-en="Save">Speichern</button>
       </form>
+
+      <div class="card" style="margin-bottom:var(--sp-3)">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:var(--sp-3);color:var(--mut);font-size:.85rem">
+          <svg class="ic" viewBox="0 0 24 24"><use href="#i-graph"/></svg><span data-en="Projects">Projekte</span>
+          <button class="btn ghost" style="margin-left:auto;min-height:38px;font-size:.82rem;padding:6px 12px" data-act="picker">
+            <svg class="ic" style="width:16px;height:16px" viewBox="0 0 24 24"><use href="#i-plus"/></svg><span data-en="Add">Hinzufügen</span></button>
+        </div>
+        <div id="projlist" style="display:flex;flex-direction:column;gap:var(--sp-2)"></div>
+      </div>
+
+      <div class="card" id="graphstockcard" style="margin-bottom:var(--sp-3);display:none">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:var(--sp-3);color:var(--mut);font-size:.85rem">
+          <svg class="ic" viewBox="0 0 24 24"><use href="#i-graph"/></svg><span data-en="Graph inventory">Graph-Bestand</span></div>
+        <p style="color:var(--mut2);font-size:.78rem;line-height:1.55;margin:0 0 var(--sp-3)" data-en="Every graph must belong to a registered project. Anything listed here needs a decision: register the source folder as a project, keep the graph as documented archive material, or remove it completely. Source folders are never touched.">
+          Jeder Graph gehört zu einem registrierten Projekt. Was hier steht, braucht eine Entscheidung:
+          Quellordner als Projekt registrieren, den Graphen als dokumentiertes Archiv behalten oder
+          vollständig entfernen. Quellordner werden dabei nie angefasst.</p>
+        <div id="graphstock" style="display:flex;flex-direction:column;gap:var(--sp-2)"></div>
+      </div>
 
       <div class="card" style="margin-bottom:var(--sp-3)">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:var(--sp-3);color:var(--mut);font-size:.85rem">
@@ -424,7 +424,8 @@
           gültig und lässt sich jederzeit unter „Verbundene Clients" wieder abmelden.</span></p>
         <form style="display:flex;gap:var(--sp-2);flex-wrap:wrap" data-form="token">
           <input id="tokenlabel" placeholder="Name des Geräts, z. B. „Laptop“ oder „Claude Code“" data-en-ph="Device name, e.g. “Laptop” or “Claude Code”"
-                 style="flex:1;min-width:14rem" autocomplete="off" maxlength="60">
+                 style="flex:1;min-width:14rem" autocomplete="off" maxlength="60"
+                 aria-label="Name des Geräts" data-en-title="Device name">
           <button class="btn" id="genbtn"><svg class="ic" viewBox="0 0 24 24"><use href="#i-plus"/></svg><span data-en="Generate token">Token erzeugen</span></button>
         </form>
         <div id="tokenout" style="display:none;margin-top:var(--sp-3)">
@@ -436,13 +437,15 @@
       </div>
 
       <div class="card" style="margin-bottom:var(--sp-3)">
+        <!-- aria-selected: statischer Anfangszustand (erster Tab aktiv); die Pflege beim
+             Wechsel sowie die Pfeiltasten-Navigation obliegen app.js. -->
         <div class="seg" role="tablist" aria-label="Client wählen" data-en-title="Choose client">
-          <button class="segbtn on" data-c="webai" data-act="client" data-arg="webai" role="tab">claude.ai</button>
-          <button class="segbtn" data-c="code" data-act="client" data-arg="code" role="tab">Claude Code</button>
-          <button class="segbtn" data-c="desktop" data-act="client" data-arg="desktop" role="tab">Claude Desktop</button>
-          <button class="segbtn" data-c="rest" data-act="client" data-arg="rest" role="tab" data-en="Other / REST">Andere / REST</button>
+          <button class="segbtn on" data-c="webai" data-act="client" data-arg="webai" role="tab" aria-selected="true" aria-controls="clientbody">claude.ai</button>
+          <button class="segbtn" data-c="code" data-act="client" data-arg="code" role="tab" aria-selected="false" aria-controls="clientbody">Claude Code</button>
+          <button class="segbtn" data-c="desktop" data-act="client" data-arg="desktop" role="tab" aria-selected="false" aria-controls="clientbody">Claude Desktop</button>
+          <button class="segbtn" data-c="rest" data-act="client" data-arg="rest" role="tab" aria-selected="false" aria-controls="clientbody" data-en="Other / REST">Andere / REST</button>
         </div>
-        <div id="clientbody" style="margin-top:var(--sp-4)"></div>
+        <div id="clientbody" role="tabpanel" style="margin-top:var(--sp-4)"></div>
       </div>
 
       <div class="pagehead" style="margin-top:var(--sp-8)">
@@ -477,20 +480,6 @@
         <div id="healthinfo" class="statgrid"></div>
       </div>
 
-      <div class="card" id="healtherrbox" style="margin-top:var(--sp-3);display:none">
-        <div style="display:flex;align-items:center;gap:8px;color:var(--red);font-size:.85rem;margin-bottom:var(--sp-3)">
-          <svg class="ic" viewBox="0 0 24 24"><use href="#i-alert"/></svg><span data-en="Recent errors from mapping runs">Letzte Fehler aus den Mapping-Läufen</span></div>
-        <pre id="healtherrs" style="margin:0;font-size:.76rem;line-height:1.6;color:var(--mut);white-space:pre-wrap;overflow-wrap:anywhere"></pre>
-      </div>
-    </div>
-  </div></section>
-
-  <!-- EINSTELLUNGEN -->
-  <section class="tab" id="tab-settings" aria-label="Einstellungen" data-en-title="Settings"><div class="pad">
-    <div style="max-width:44rem;margin:0 auto">
-      <div class="pagehead"><svg class="ic" width="22" height="22" viewBox="0 0 24 24"><use href="#i-lock"/></svg><h2 data-en="Settings">Einstellungen</h2></div>
-      <p class="pagesub" data-en="Security and admin for your hub: two-factor authentication, vault access, access password and encrypted backups.">Sicherheit und Verwaltung deines Hubs: Zwei-Faktor-Anmeldung, Vault-Zugang, Zugangspasswort und verschlüsselte Sicherungen.</p>
-
       <div class="card" style="margin-top:var(--sp-3)">
         <div style="display:flex;align-items:center;gap:8px;color:var(--mut);font-size:.85rem;margin-bottom:var(--sp-3)">
           <svg class="ic" viewBox="0 0 24 24"><use href="#i-shieldcheck"/></svg><span data-en="Two-factor authentication">Zwei-Faktor-Authentifizierung</span></div>
@@ -521,11 +510,10 @@
         </details>
       </div>
 
-      <div class="card" style="margin-top:var(--sp-3)">
-        <div style="display:flex;align-items:center;gap:8px;color:var(--mut);font-size:.85rem;margin-bottom:var(--sp-3)">
-          <svg class="ic" viewBox="0 0 24 24"><use href="#i-logout"/></svg><span data-en="Session">Sitzung</span></div>
-        <p style="color:var(--mut2);font-size:.8rem;line-height:1.55;margin:0 0 var(--sp-3)" data-en="Sign out of this browser. Your device tokens stay valid — manage them under Connect.">Aus diesem Browser abmelden. Deine Geräte-Token bleiben gültig — verwalten unter „Verbinden".</p>
-        <button class="btn ghost" data-act="logout"><svg class="ic" viewBox="0 0 24 24"><use href="#i-logout"/></svg><span data-en="Sign out">Abmelden</span></button>
+      <div class="card" id="healtherrbox" style="margin-top:var(--sp-3);display:none">
+        <div style="display:flex;align-items:center;gap:8px;color:var(--red);font-size:.85rem;margin-bottom:var(--sp-3)">
+          <svg class="ic" viewBox="0 0 24 24"><use href="#i-alert"/></svg><span data-en="Recent errors from mapping runs">Letzte Fehler aus den Mapping-Läufen</span></div>
+        <pre id="healtherrs" style="margin:0;font-size:.76rem;line-height:1.6;color:var(--mut);white-space:pre-wrap;overflow-wrap:anywhere"></pre>
       </div>
     </div>
   </div></section>
@@ -555,7 +543,7 @@
 <nav id="bottomnav" aria-label="Hauptnavigation" data-en-title="Main navigation">
   <button data-tab="graph" class="on" data-act="tab" data-arg="graph"><svg class="ic" viewBox="0 0 24 24"><use href="#i-graph"/></svg><span data-en="Graphs">Graphen</span></button>
   <button data-tab="ask" data-act="tab" data-arg="ask"><svg class="ic" viewBox="0 0 24 24"><use href="#i-spark"/></svg><span data-en="Ask">Fragen</span></button>
-  <button data-tab="projekte" data-act="tab" data-arg="projekte"><svg class="ic" viewBox="0 0 24 24"><use href="#i-graph"/></svg><span data-en="Projects">Projekte</span></button>
+  <button data-tab="secrets" data-act="tab" data-arg="secrets"><svg class="ic" viewBox="0 0 24 24"><use href="#i-key"/></svg><span data-en="Secrets">Secrets</span></button>
   <button data-tab="mapping" data-act="tab" data-arg="mapping"><svg class="ic" viewBox="0 0 24 24"><use href="#i-moon"/></svg><span data-en="Mapping">Mapping</span></button>
   <button id="morebtn" data-act="more"><svg class="ic" viewBox="0 0 24 24"><use href="#i-more"/></svg><span data-en="More">Mehr</span></button>
 </nav>
@@ -572,11 +560,7 @@
 <dialog id="moredlg" style="width:min(94vw,20rem)">
   <h3 style="margin:0 0 var(--sp-3)" data-en="More">Mehr</h3>
   <div style="display:flex;flex-direction:column;gap:6px">
-    <button class="btn ghost" style="justify-content:flex-start;min-height:48px" data-act="moretab" data-arg="secrets">
-      <svg class="ic" viewBox="0 0 24 24"><use href="#i-key"/></svg><span data-en="Secrets">Secrets</span></button>
-    <button class="btn ghost" style="justify-content:flex-start;min-height:48px" data-act="moretab" data-arg="settings">
-      <svg class="ic" viewBox="0 0 24 24"><use href="#i-lock"/></svg><span data-en="Settings">Einstellungen</span></button>
-    <button class="btn ghost" style="justify-content:flex-start;min-height:48px" data-act="moretab" data-arg="connect">
+    <button class="btn ghost monly" style="justify-content:flex-start;min-height:48px" data-act="moretab" data-arg="connect">
       <svg class="ic" viewBox="0 0 24 24"><use href="#i-link"/></svg><span data-en="Connect">Verbinden</span></button>
     <button class="btn ghost" style="justify-content:flex-start;min-height:48px" data-act="moretab" data-arg="health">
       <svg class="ic" viewBox="0 0 24 24"><use href="#i-pulse"/></svg><span data-en="Diagnostics">Diagnose</span></button>
@@ -610,7 +594,7 @@
   <p style="margin-top:0"><span data-en="Files and folders that mapping skips — one rule per line (gitignore syntax). Sensitive things like ">Dateien und Ordner, die beim Mapping ignoriert werden — eine Regel pro Zeile
   (gitignore-Syntax). Sensibles wie </span><span class="mono">.env</span>, <span class="mono">data/</span><span data-en=" or "> oder
   </span><span class="mono">*.key</span><span data-en=" always belong here."> gehört immer hierher.</span></p>
-  <textarea id="ignoretext" spellcheck="false" style="width:100%;min-height:11rem;background:var(--bg);border:1px solid var(--line2);color:var(--txt);border-radius:var(--r-sm);padding:10px;font-family:ui-monospace,Menlo,monospace;font-size:.82rem;resize:vertical"></textarea>
+  <textarea id="ignoretext" spellcheck="false" aria-label="Ausschluss-Regeln, eine pro Zeile (gitignore-Syntax)" data-en-title="Exclusion rules, one per line (gitignore syntax)" style="width:100%;min-height:11rem;background:var(--bg);border:1px solid var(--line2);color:var(--txt);border-radius:var(--r-sm);padding:10px;font-family:ui-monospace,Menlo,monospace;font-size:.82rem;resize:vertical"></textarea>
   <div class="row" style="margin-top:var(--sp-4)">
     <button class="btn ghost" data-act="closedlg" data-arg="ignoredlg" data-en="Cancel">Abbrechen</button>
     <button class="btn" id="ignoresave" data-act="saveignore" data-en="Save">Speichern</button>

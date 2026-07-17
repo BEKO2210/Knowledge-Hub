@@ -7,9 +7,11 @@
 :root{
   /* Flächen (Slate-Skala, von hinten nach vorn) */
   --bg:#0e1526; --surface:#1a2438; --surface2:#243149; --line:#31405b; --line2:#465873;
-  --txt:#f6f8fc; --mut:#9aa8bd; --mut2:#68788f;
-  /* Akzente */
-  --acc:#22c55e; --acc-dim:#16a34a; --acc-ink:#052e16;
+  /* --mut2 auf #92a0b7 gehoben: der alte Wert lag flächendeckend unter WCAG AA 4,5:1
+     (4,05/3,45/2,90 auf bg/surface/surface2) — jetzt 6,88/5,86/4,93. */
+  --txt:#f6f8fc; --mut:#9aa8bd; --mut2:#92a0b7;
+  /* Akzente (--acc-hi ist die helle Oberkante des Primary-Button-Verlaufs) */
+  --acc:#22c55e; --acc-hi:#2ad066; --acc-dim:#16a34a; --acc-ink:#052e16;
   --blue:#60a5fa; --red:#f87171; --amber:#fbbf24;
   --grad-acc:linear-gradient(135deg,#22c55e,#38bdf8);
   /* Radien & Abstände */
@@ -33,8 +35,10 @@
 /* ---------- Light Mode: über Systemeinstellung ODER Umschalter ---------- */
 @media(prefers-color-scheme:light){:root:not([data-theme=dark]){
   --bg:#eef1f7; --surface:#ffffff; --surface2:#eaeef6; --line:#dde3ee; --line2:#c2cbdb;
-  --txt:#101828; --mut:#516078; --mut2:#64708a;
-  --acc:#15803d; --acc-dim:#15803d; --acc-ink:#052e16;
+  --txt:#101828; --mut:#516078; --mut2:#57627a;
+  /* Primary-Button hell: --acc-ink auf --acc-dim gab nur 2,97:1 (AA verlangt 4,5:1).
+     Dunklerer Verlauf + weiße Schrift: 5,02–7,13:1 (Hover bleibt ≥4,5:1). */
+  --acc:#15803d; --acc-hi:#15803d; --acc-dim:#166534; --acc-ink:#ffffff;
   --blue:#2563eb; --red:#dc2626; --amber:#b45309;
   --shadow:0 4px 20px rgba(15,23,42,.1); --shadow-lg:0 18px 44px -12px rgba(15,23,42,.22);
   --card-2:#f7f9fd; --login-glow:#d5e2f7; --canvas-glow:#dde6f4; --scrim:rgba(255,255,255,.6);
@@ -44,8 +48,10 @@
 }}
 :root[data-theme=light]{
   --bg:#eef1f7; --surface:#ffffff; --surface2:#eaeef6; --line:#dde3ee; --line2:#c2cbdb;
-  --txt:#101828; --mut:#516078; --mut2:#64708a;
-  --acc:#15803d; --acc-dim:#15803d; --acc-ink:#052e16;
+  --txt:#101828; --mut:#516078; --mut2:#57627a;
+  /* Primary-Button hell: --acc-ink auf --acc-dim gab nur 2,97:1 (AA verlangt 4,5:1).
+     Dunklerer Verlauf + weiße Schrift: 5,02–7,13:1 (Hover bleibt ≥4,5:1). */
+  --acc:#15803d; --acc-hi:#15803d; --acc-dim:#166534; --acc-ink:#ffffff;
   --blue:#2563eb; --red:#dc2626; --amber:#b45309;
   --shadow:0 4px 20px rgba(15,23,42,.1); --shadow-lg:0 18px 44px -12px rgba(15,23,42,.22);
   --card-2:#f7f9fd; --login-glow:#d5e2f7; --canvas-glow:#dde6f4; --scrim:rgba(255,255,255,.6);
@@ -53,6 +59,18 @@
   --switch-off:linear-gradient(#e2e7f0,#cdd5e3); --glass:rgba(255,255,255,.93);
   color-scheme:light;
 }
+/* Light-Kontrast-Reparaturen (WCAG AA):
+   - Select-Pfeil: #94a3b8 erreichte auf hellem Input-Grund nur 2,27:1 (1.4.11 verlangt 3:1).
+   - Badges/Deltas auf getöntem rgba-Grund lagen bei 3,7–4,4:1 — Textfarben abgedunkelt
+     (#166534 → ≥5,6:1, #b91c1c → ≥5,0:1 auf den Tönungen über surface und bg). */
+@media(prefers-color-scheme:light){
+  :root:not([data-theme=dark]) select{background-image:url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="%2357627a" stroke-width="2" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>')}
+  :root:not([data-theme=dark]) .b-set,:root:not([data-theme=dark]) .delta.up{color:#166534}
+  :root:not([data-theme=dark]) .b-del,:root:not([data-theme=dark]) .delta.down{color:#b91c1c}
+}
+:root[data-theme=light] select{background-image:url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="%2357627a" stroke-width="2" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>')}
+:root[data-theme=light] .b-set,:root[data-theme=light] .delta.up{color:#166534}
+:root[data-theme=light] .b-del,:root[data-theme=light] .delta.down{color:#b91c1c}
 @media(prefers-reduced-motion:reduce){:root{--dur:1ms;--dur-fast:1ms;--spring:linear}}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;height:100%}
@@ -83,7 +101,7 @@ select{appearance:none;background-image:url('data:image/svg+xml;utf8,<svg xmlns=
 .btn{
   display:inline-flex;align-items:center;justify-content:center;gap:8px;
   min-height:44px;padding:10px 17px;border-radius:var(--r-sm);border:0;
-  background:linear-gradient(180deg,#2ad066,var(--acc-dim));color:var(--acc-ink);
+  background:linear-gradient(180deg,var(--acc-hi),var(--acc-dim));color:var(--acc-ink);
   font-weight:600;font-size:var(--fs-base);letter-spacing:-.006em;
   box-shadow:0 1px 0 rgba(255,255,255,.18) inset,0 2px 8px -2px rgba(34,197,94,.45);
   transition:transform var(--dur-fast) var(--ease),box-shadow var(--dur) var(--ease),
@@ -108,6 +126,9 @@ header{
 .logo{display:flex;align-items:center;gap:10px;font-weight:700;font-size:1.05rem;white-space:nowrap;flex:none}
 .logo svg{color:var(--acc)}
 .logo em{font-style:normal;color:var(--acc)}
+/* Die Wortmarke ist ein h1 (einzige Seitenüberschrift) — UA-Überschriften-Styles
+   neutralisieren, damit das Logo exakt wie vorher aussieht. */
+.logo h1.brandtext{margin:0;font:inherit;letter-spacing:normal}
 /* Die Navigation ist das einzige Element, das nachgibt: Sie füllt den freien Platz
    und scrollt notfalls in sich selbst — die Knöpfe rechts werden nie abgeschnitten. */
 nav.desktop{display:flex;gap:4px;margin-left:var(--sp-4);flex:1 1 auto;min-width:0;
@@ -122,24 +143,22 @@ nav.desktop button{
 nav.desktop button:hover{color:var(--txt)}
 nav.desktop button.on{background:var(--surface2);color:var(--txt)}
 nav.desktop button.on svg{color:var(--acc)}
-#langbtn,#themebtn,#helpbtn,#refreshbtn{flex:none}
+#langbtn,#themebtn,#helpbtn,#logoutbtn{flex:none}
 #langbtn{background:none;border:1px solid var(--line);color:var(--mut);border-radius:var(--r-sm);min-height:44px;min-width:44px;font-size:.8rem;font-weight:600;letter-spacing:.02em}
 #langbtn:hover{color:var(--txt);border-color:var(--line2)}
 #themebtn{margin-left:6px;background:none;border:1px solid var(--line);color:var(--mut);border-radius:var(--r-sm);min-height:44px;min-width:44px;display:flex;align-items:center;justify-content:center}
 #themebtn:hover{color:var(--txt);border-color:var(--line2)}
 #helpbtn{margin-left:6px;background:none;border:1px solid var(--line);color:var(--mut);border-radius:var(--r-sm);min-height:44px;min-width:44px;display:flex;align-items:center;justify-content:center}
 #helpbtn:hover{color:var(--txt);border-color:var(--line2)}
-/* Aktualisieren: schlichter Icon-Knopf wie Theme/Hilfe — kein Text, kein grauer Kasten. */
-#refreshbtn{margin-left:6px;background:none;border:1px solid var(--line);color:var(--mut);border-radius:var(--r-sm);min-height:44px;min-width:44px;display:flex;align-items:center;justify-content:center}
-#refreshbtn:hover{color:var(--acc);border-color:var(--acc)}
-#refreshbtn:hover svg{transform:rotate(90deg)}
-#refreshbtn svg{transition:transform .35s cubic-bezier(.4,0,.2,1)}
-#refreshbtn:active svg{animation:kmcp-spin .6s cubic-bezier(.4,0,.2,1)}
-@keyframes kmcp-spin{to{transform:rotate(360deg)}}
+#logoutbtn{margin-left:8px;background:none;border:1px solid var(--line);color:var(--mut);border-radius:var(--r-sm);min-height:44px;min-width:44px;display:flex;align-items:center;justify-content:center;gap:8px;padding:0 12px}
+#logoutbtn:hover{color:var(--txt);border-color:var(--line2)}
+#logoutbtn span{font-size:.85rem}
 /* Schmale Notebooks (1101–1260): Wortmarke und Abmelden-Text weichen, damit die
    Navigation vollständig sichtbar bleibt. Icon und Knopf bleiben erhalten. */
 @media(min-width:1101px) and (max-width:1260px){
   .logo .brandtext{display:none}
+  #logoutbtn span{display:none}
+  #logoutbtn{padding:0;min-width:44px}
 }
 /* Sekundäre Einträge im „Mehr"-Menü sind am Desktop bereits im Header sichtbar. */
 @media(min-width:1101px){#moredlg .monly{display:none}}
@@ -185,8 +204,12 @@ main{flex:1;min-height:0;display:flex;position:relative}
 .pagesub{color:var(--mut);font-size:var(--fs-md);line-height:1.6;margin:0 0 var(--sp-6);max-width:64ch}
 
 /* ---------- login ---------- */
-#login{position:fixed;inset:0;background:radial-gradient(1200px 600px at 50% -10%,var(--login-glow),var(--bg));display:flex;align-items:center;justify-content:center;z-index:100;padding:var(--sp-4)}
-#login form{background:var(--surface);border:1px solid var(--line);padding:var(--sp-8) var(--sp-6);border-radius:var(--r-lg);width:min(100%,24rem);display:flex;flex-direction:column;gap:var(--sp-4);box-shadow:var(--shadow)}
+/* overflow-y:auto + margin:auto am Formular: Bei kurzen Viewports (Handy quer, ~320 px Höhe;
+   mit 2FA-Zeile ≈415 px Formularhöhe) wurde die zentrierte Form oben+unten abgeschnitten und
+   der Absende-Button war unerreichbar. Auto-Margins zentrieren, solange Platz reicht, und
+   fallen bei Überlauf auf 0 — dann scrollt der Container ab dem Formularanfang. */
+#login{position:fixed;inset:0;background:radial-gradient(1200px 600px at 50% -10%,var(--login-glow),var(--bg));display:flex;align-items:center;justify-content:center;z-index:100;padding:var(--sp-4);overflow-y:auto}
+#login form{background:var(--surface);border:1px solid var(--line);padding:var(--sp-8) var(--sp-6);border-radius:var(--r-lg);width:min(100%,24rem);display:flex;flex-direction:column;gap:var(--sp-4);box-shadow:var(--shadow);margin:auto;max-height:calc(100dvh - 2 * var(--sp-4) - 2px);overflow-y:auto}
 #login .logo{justify-content:center;font-size:1.25rem;margin-bottom:2px}
 #login p.sub{color:var(--mut);font-size:.88rem;margin:0;text-align:center}
 #login .err{color:var(--red);font-size:.85rem;min-height:1.2em;margin:0;text-align:center}
@@ -225,7 +248,9 @@ main{flex:1;min-height:0;display:flex;position:relative}
 #canvasbox{flex:1;position:relative;min-width:0;background:radial-gradient(900px 500px at 60% 30%,var(--canvas-glow),var(--bg))}
 #cv{position:absolute;inset:0;cursor:grab;touch-action:none}
 #cv canvas{display:block}
-#graphload{position:absolute;inset:0;display:none;align-items:center;justify-content:center;flex-direction:column;gap:18px;color:var(--mut);background:var(--scrim);backdrop-filter:blur(3px)}
+/* z-index 7: über #zoomctl (5) und #legend (6) — sonst lagen beide sicht- und klickbar
+   ÜBER dem Lade-Scrim. */
+#graphload{position:absolute;inset:0;display:none;align-items:center;justify-content:center;flex-direction:column;gap:18px;color:var(--mut);background:var(--scrim);backdrop-filter:blur(3px);z-index:7}
 #graphload.on{display:flex}
 /* Leucht-Spinner (Vorlage: Uiverse.io / xXJollyHAKERXx) — Größe über --sz steuerbar.
    Zwei Ebenen: außen ein rotierender Farbverlauf mit Glow, innen eine weiche
@@ -313,7 +338,8 @@ main{flex:1;min-height:0;display:flex;position:relative}
 .neighrow .nl{flex:1;min-width:0;font-size:var(--fs-sm);overflow-wrap:anywhere;word-break:break-word;line-height:1.35}
 /* Node content shown on click. Wraps and scrolls so a long file path or a long
    rationale can never push the panel wider than the screen. */
-#side .ncontent{display:none;font-size:.82rem;line-height:1.6;color:var(--fg);background:var(--bg);
+/* --fg existierte nirgends (Deklaration fiel stumm auf Vererbung zurück) → --txt. */
+#side .ncontent{display:none;font-size:.82rem;line-height:1.6;color:var(--txt);background:var(--bg);
   border:1px solid var(--line);border-radius:var(--r-sm);padding:var(--sp-3);margin-bottom:var(--sp-3);
   white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;max-height:38vh;overflow-y:auto}
 #side .ncontent .nsrc{display:inline-block;margin-top:8px;font-size:.75rem;color:var(--acc);overflow-wrap:anywhere}
@@ -330,8 +356,11 @@ main{flex:1;min-height:0;display:flex;position:relative}
   background:var(--glass);backdrop-filter:blur(8px);border:1px solid var(--line);
   border-radius:var(--r-md);box-shadow:var(--shadow);overflow:hidden;transition:opacity var(--dur)}
 #legend.hidden{display:none}
+/* #legendhead ist ein <button> (Tastaturzugang) — Button-UA-Styles zurücksetzen,
+   Optik bleibt die des früheren div. */
 #legendhead{display:flex;align-items:center;gap:7px;padding:9px 11px;font-size:var(--fs-sm);
-  font-weight:600;color:var(--mut);cursor:pointer;user-select:none;min-height:40px}
+  font-weight:600;color:var(--mut);cursor:pointer;user-select:none;min-height:40px;
+  width:100%;background:none;border:0;text-align:left}
 #legendhead .caret{margin-left:auto;transform:rotate(-90deg);transition:transform var(--dur)}
 #legend.collapsed #legendhead .caret{transform:rotate(0deg)}
 #legend.collapsed #legendbody{display:none}
@@ -387,7 +416,9 @@ main{flex:1;min-height:0;display:flex;position:relative}
 #reportout li{margin:.25em 0}
 
 /* toast */
-#toasts{position:fixed;left:50%;bottom:calc(76px + var(--sab));transform:translateX(-50%);display:flex;flex-direction:column;gap:8px;z-index:90;width:min(92vw,26rem);pointer-events:none}
+/* z-index 110: ÜBER #login (100) — der 423-Flow zeigt seinen Toast („Vault gesperrt")
+   genau dann, wenn das Login-Overlay aufgeht; mit 90 lag er unsichtbar dahinter. */
+#toasts{position:fixed;left:50%;bottom:calc(76px + var(--sab));transform:translateX(-50%);display:flex;flex-direction:column;gap:8px;z-index:110;width:min(92vw,26rem);pointer-events:none}
 .toast{display:flex;align-items:center;gap:10px;background:var(--surface2);border:1px solid var(--line2);padding:12px 16px;border-radius:var(--r-md);font-size:.88rem;box-shadow:var(--shadow);animation:pop var(--dur) var(--ease)}
 .toast svg{color:var(--acc)}
 .toast.err svg{color:var(--red)}
@@ -499,9 +530,10 @@ dialog .row{display:flex;gap:var(--sp-2);justify-content:flex-end}
    Das ist auf Tablets klarer als eine gequetschte oder scrollende Kopfleiste. */
 @media(max-width:1100px){
   nav.desktop{display:none}
+  #logoutbtn span{display:none}
   /* Sprache/Theme/Hilfe wandern ins „Mehr"-Menü, damit der Header nicht bricht */
   #langbtn,#themebtn,#helpbtn{display:none}
-  #refreshbtn{margin-left:auto}
+  #logoutbtn{margin-left:auto}
   /* Ein langer (konfigurierbarer) Markenname darf den Header bei 320 px nicht über den
      Rand schieben (horizontaler Reflow, WCAG 1.4.10): Logo gibt nach, Text wird gekürzt. */
   .logo{flex:0 1 auto;min-width:0}
@@ -531,7 +563,9 @@ dialog .row{display:flex;gap:var(--sp-2);justify-content:flex-end}
   /* Unterhalb der Kopfleiste: Das Banner darf die Navigation nicht verdecken —
      sonst nimmt man dem Nutzer im Fehlerfall genau die Knöpfe, die er braucht. */
   position:fixed;left:50%;transform:translateX(-50%) translateY(-220%);
-  top:calc(var(--sat) + 72px);z-index:60;
+  /* z-index 110: ÜBER #login (100) — Fehlermeldungen müssen auch über dem
+     Login-Overlay lesbar sein (z. B. 423 Vault gesperrt). */
+  top:calc(var(--sat) + 72px);z-index:110;
   display:flex;align-items:center;gap:var(--sp-3);
   max-width:min(94vw,34rem);padding:12px var(--sp-3) 12px var(--sp-4);
   /* Bewusst in beiden Themes dasselbe satte Rot: Weiß darauf ergibt 6,0:1 (AA).

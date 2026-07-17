@@ -21,14 +21,23 @@ async def secrets_list(request: Request) -> JSONResponse:
 
 async def secrets_set(request: Request) -> JSONResponse:
     body = await json_object(request)
-    name, value = str(body.get("name", "")).strip(), str(body.get("value", ""))
+    # Typ-Validierung vor jeder Weiterverarbeitung: eine str()-Koersion würde JSON-null
+    # sonst still zu einem Secret namens "None" mit Wert "None" machen — ein
+    # Aufruferfehler muss als 400 sichtbar sein, nicht als Daten-Müll im Vault.
+    name, value = body.get("name"), body.get("value")
+    if not isinstance(name, str) or not isinstance(value, str):
+        return JSONResponse({"error": T("Name und Wert sind Pflicht")}, status_code=400)
+    name = name.strip()
     if not name or not value:
         return JSONResponse({"error": T("Name und Wert sind Pflicht")}, status_code=400)
     # Erlaubt: Buchstaben, Ziffern, _ . - und Leerzeichen. Alles andere (Steuerzeichen,
     # Zeilenumbrüche, Pfadtrenner) wird abgelehnt. Der Vault prüft dasselbe noch einmal —
     # hier passiert es nur früher, damit die Meldung übersetzt ankommt. Abgelehnte
     # Versuche landen im Audit-Log: Herumprobieren hinterlässt eine Spur.
-    if not SECRET_NAME_RE.match(name):
+    # Reine Punkt-Namen (".", "..") bestehen die Regex, sind aber Pfad-Artefakte: Über
+    # HTTP normalisieren Clients /ui/api/secrets/.. zur Elternroute — das Secret wäre in
+    # der Oberfläche weder abruf- noch löschbar. Daher bereits beim Setzen ablehnen.
+    if not SECRET_NAME_RE.match(name) or not name.strip("."):
         vault.audit("SET-REJECT", f"{name} (Name unzulässig)", client="web-ui")
         return JSONResponse(
             {
@@ -39,6 +48,12 @@ async def secrets_set(request: Request) -> JSONResponse:
             },
             status_code=400,
         )
+    # Versteckte/interne Secrets (z. B. __2fa__) sind über die Oberfläche nicht setzbar —
+    # sonst ließe sich per Web-SET der 2FA-Blob überschreiben (stilles Abschalten oder
+    # injizierter TOTP-Seed). Dieselbe 404-Antwort wie bei get/delete, damit kein
+    # Existenz-Orakel entsteht; der MCP-Weg sperrt das bereits genauso.
+    if name in HIDDEN_SECRETS:
+        return JSONResponse({"error": "not found"}, status_code=404)
     if len(value) > vault.SECRET_VALUE_MAX:
         vault.audit("SET-REJECT", f"{name} (Wert {len(value)} Zeichen)", client="web-ui")
         return JSONResponse({"error": T("Wert ist zu lang (max. 20.000 Zeichen)")}, status_code=400)

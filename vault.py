@@ -112,7 +112,14 @@ def _env_key() -> bytes | None:
     raw = os.environ.get("VAULT_KEY", "")
     if not raw:
         return None
-    key = base64.b64decode(raw)
+    try:
+        key = base64.b64decode(raw)
+    except ValueError:
+        # Tippfehler in der Umgebung (ungültiges Base64; binascii.Error ist eine
+        # ValueError-Unterklasse): wie „kein Schlüssel" behandeln — die Aufrufer
+        # (status, init, set_auto_unlock, unlock_env) liefern dann ihren normalen
+        # Kein-Schlüssel-/VaultLocked-Pfad, statt mit einem 500-Crash auszusteigen.
+        return None
     return key if len(key) == 32 else None
 
 
@@ -126,12 +133,24 @@ def _read_file() -> dict | None:
     if raw[:1] == b"{":
         try:
             return json.loads(raw)
-        except json.JSONDecodeError as e:
-            # Beschädigte Datei (z. B. Torn-Write, halb überspielte Sicherung):
-            # sauber melden statt als roher JSONDecodeError einen 500-Traceback
-            # (oder — schlimmer — eine 400 „kein gültiges JSON") zu erzeugen.
+        except (json.JSONDecodeError, UnicodeDecodeError) as e:
+            # Beschädigte Datei (z. B. Torn-Write, halb überspielte Sicherung, Müll-
+            # Bytes statt UTF-8): sauber melden statt als roher JSONDecodeError/
+            # UnicodeDecodeError einen 500-Traceback (oder — schlimmer — eine 400
+            # „kein gültiges JSON") zu erzeugen.
             raise VaultCorrupt(f"Vault-Datei ist beschädigt (kein gültiges JSON): {e}") from e
     return {"version": 1, "raw": raw}  # altes Format
+
+
+def _ensure_dir() -> None:
+    """Vault-Verzeichnis bei Bedarf anlegen.
+
+    Bei der Ersteinrichtung auf Bare-Metal/systemd existiert das Verzeichnis
+    (Standard: ~/knowledge-mcp) vor dem ersten Schreiben noch nicht — ohne das
+    Anlegen crashte init() mit einem FileNotFoundError und die Einrichtung
+    verklemmte (env schon geschrieben, Vault fehlt, Retry crasht erneut).
+    """
+    VAULT_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 
 def _write_file(doc: dict) -> None:
@@ -143,6 +162,7 @@ def _write_file(doc: dict) -> None:
     weg, der Langsamere fiel danach über ein `FileNotFoundError: vault.tmp` und sein
     Secret war verloren. Ein eindeutiger Name pro Schreibvorgang kann nicht kollidieren.
     """
+    _ensure_dir()
     fd, pfad = tempfile.mkstemp(dir=VAULT_PATH.parent, prefix=".vault-", suffix=".tmp")
     tmp = Path(pfad)
     try:
@@ -181,6 +201,7 @@ def _transaktion():
     with _RLOCK:
         depth = getattr(_TX, "depth", 0)
         if depth == 0:
+            _ensure_dir()  # vault.lock liegt neben der vault.enc
             LOCK_PATH.touch(exist_ok=True)
             fh = LOCK_PATH.open("r+")
             fcntl.flock(fh, fcntl.LOCK_EX)
@@ -286,8 +307,23 @@ def _doc() -> dict:
     doc = _read_file()
     if doc is None:
         raise VaultLocked("Kein Vault vorhanden.")
-    if doc.get("version") == 1:
-        doc = _migrate_v1(doc)
+    if isinstance(doc, dict) and doc.get("version") == 1:
+        if not isinstance(doc.get("raw"), bytes):
+            raise VaultCorrupt("Vault-Datei ist beschädigt (v1 ohne Datenblock).")
+        # Die Migration SCHREIBT die Vault-Datei — sie gehört unter dieselbe Sperre
+        # wie jede andere Änderung, sonst migrieren zwei Prozesse parallel mit
+        # verschiedenen Hauptschlüsseln (Lost Update, danach VaultCorrupt bis zum
+        # Re-Login). Nach dem Sperr-Erwerb erneut lesen und prüfen: Der Wartende
+        # vor uns hat vielleicht schon migriert.
+        with _transaktion():
+            doc = _read_file() or doc
+            if isinstance(doc, dict) and doc.get("version") == 1 and isinstance(doc.get("raw"), bytes):
+                doc = _migrate_v1(doc)
+    if not isinstance(doc, dict) or not isinstance(doc.get("wraps"), dict):
+        # Gültiges JSON reicht nicht: Ohne Verpackungs-Karte ist der Vault beschädigt —
+        # sonst schlägt jeder Zugriff (status, unlock, secret_*) als nackter
+        # KeyError/AttributeError in einem 500 durch.
+        raise VaultCorrupt("Vault-Datei ist beschädigt (fehlende/fehlerhafte 'wraps'-Struktur).")
     return doc
 
 
@@ -311,7 +347,13 @@ def unlock(password: str) -> bool:
         ).derive(password.encode())
         _mk = _unwrap(key, w)
         return True
-    except Exception:  # noqa: BLE001 - falsches Passwort, kaputte Datei
+    except VaultLocked:
+        # Gesperrt/KORRUPT ist kein „falsches Passwort": Bei einer beschädigten
+        # Datei (VaultCorrupt) tippt der Nutzer sonst das richtige Passwort endlos
+        # neu, ohne je eine brauchbare Fehlermeldung zu bekommen. Durchreichen —
+        # die HTTP-Schicht hat dafür einen eigenen Handler (Beschädigungs-Hinweis).
+        raise
+    except Exception:  # noqa: BLE001 - falsches Passwort
         return False
 
 
@@ -378,16 +420,20 @@ def set_auto_unlock(enabled: bool) -> bool:
     """Env-Verpackung an-/abschalten. Ohne sie bleibt der Vault nach einem Neustart
     gesperrt, bis sich jemand anmeldet — dafür schützt er dann auch gegen ein
     übernommenes Server-Konto."""
-    doc = _doc()
-    mk = _key()
-    if enabled:
-        ek = _env_key()
-        if not ek:
-            return False
-        doc["wraps"]["env"] = _wrap(ek, mk)
-    else:
-        doc["wraps"].pop("env", None)
-    _write_file(doc)
+    # Read-Modify-Write auf dem GESAMTEN Dokument (inkl. data-Block) — das gehört
+    # komplett unter die Transaktionssperre, sonst überschreibt dieser Aufruf ein
+    # paralleles secret_set still mit dem veralteten Stand (Lost Update).
+    with _transaktion():
+        doc = _doc()
+        mk = _key()
+        if enabled:
+            ek = _env_key()
+            if not ek:
+                return False
+            doc["wraps"]["env"] = _wrap(ek, mk)
+        else:
+            doc["wraps"].pop("env", None)
+        _write_file(doc)
     audit("VAULT-AUTOUNLOCK", "an" if enabled else "aus", client="web-ui")
     return True
 
@@ -397,23 +443,30 @@ def change_password(old: str, new: str) -> bool:
     nur die Verpackung des Hauptschlüssels."""
     if len(new) < 8:
         raise ValueError("Das neue Passwort muss mindestens 8 Zeichen haben.")
-    doc = _doc()
-    w = doc["wraps"].get("password")
-    if w:
-        if not verify_password(old):
-            return False
-        mk = _mk or _key()
-    else:
-        mk = _key()  # Vault ohne Passwort-Verpackung (migriert ohne Passwort)
-    salt = secrets.token_bytes(16)
-    doc["wraps"]["password"] = {
-        "salt": _b64(salt),
-        "n": SCRYPT_N,
-        "r": SCRYPT_R,
-        "p": SCRYPT_P,
-        **_wrap(_derive(new, salt), mk),
-    }
-    _write_file(doc)
+    # Read-Modify-Write komplett unter der Transaktionssperre: Zwischen Lesen und
+    # Zurückschreiben liegt der langsame scrypt-Passwort-Beweis (~200 ms) — ohne
+    # Sperre verliert ein paralleles secret_set in diesem Fenster still sein Secret.
+    with _transaktion():
+        doc = _doc()
+        w = doc["wraps"].get("password")
+        if w:
+            if not verify_password(old):
+                return False
+            mk = _mk or _key()
+            # Stand nach dem Passwort-Beweis erneut lesen: verify_password kann
+            # selbst eine v1-Migration ausgelöst (und das Dokument getauscht) haben.
+            doc = _doc()
+        else:
+            mk = _key()  # Vault ohne Passwort-Verpackung (migriert ohne Passwort)
+        salt = secrets.token_bytes(16)
+        doc["wraps"]["password"] = {
+            "salt": _b64(salt),
+            "n": SCRYPT_N,
+            "r": SCRYPT_R,
+            "p": SCRYPT_P,
+            **_wrap(_derive(new, salt), mk),
+        }
+        _write_file(doc)
     audit("VAULT-PASSWORD", "geändert", client="web-ui")
     return True
 
@@ -449,6 +502,7 @@ def audit(action: str, name: str, client: str = "-") -> None:
         f"{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())} "
         f"{_clean(action, 24)} {_clean(name)} client={_clean(client, 24)}\n"
     )
+    _ensure_dir()  # audit.log liegt neben der vault.enc (Ersteinrichtung)
     with AUDIT_PATH.open("a") as fh:
         # 0600 bei jedem Schreiben erzwingen: schützt Secret-Namen + Zugriffszeiten
         # vor Gruppen-/Weltlesern und heilt eine mit falscher umask (664) angelegte

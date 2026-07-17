@@ -10,7 +10,10 @@ set -euo pipefail
 PROJECT="${1:?usage: graphify-sync <project-path>}"
 PROJECT="$(cd "$PROJECT" && pwd)"
 NAME="$(basename "$PROJECT" | tr '[:upper:]' '[:lower:]')"
-REPO="$HOME/graphify-knowledge"
+# Wissens-Repo: Umgebungsvariable (nightly-map.sh exportiert sie aus der Config)
+# schlägt den Default — im Container zeigt KNOWLEDGE_ROOT z. B. auf /data/…
+REPO="${KNOWLEDGE_ROOT:-$HOME/graphify-knowledge}"
+REPO="${REPO/#\~/$HOME}"   # führendes ~ auflösen
 SRC="$PROJECT/graphify-out"
 [ -d "$SRC" ] || { echo "no graphify-out in $PROJECT — run /graphify first"; exit 1; }
 
@@ -31,7 +34,12 @@ if git diff --cached --quiet; then
   echo "SYNC project=$NAME local=succeeded remote=skipped detail=keine-aenderung"
   exit 0
 fi
-git commit -q -m "graphify sync: $NAME ($(date -u +%Y-%m-%dT%H:%MZ))"
+# Auf frischen Maschinen ohne konfigurierte git-Identität darf der Commit nicht
+# scheitern: Lücken mit einer Hub-Identität füllen, vorhandene Config bleibt führend.
+GIT_ID=()
+git config user.name  >/dev/null 2>&1 || GIT_ID+=(-c "user.name=${GIT_AUTHOR_NAME:-Knowledge Hub}")
+git config user.email >/dev/null 2>&1 || GIT_ID+=(-c "user.email=${GIT_AUTHOR_EMAIL:-hub@localhost}")
+git "${GIT_ID[@]}" commit -q -m "graphify sync: $NAME ($(date -u +%Y-%m-%dT%H:%MZ))"
 
 # Remote-Push mit Selbstheilung (SYNC_CONTRACT, hub-audit Run 13):
 # backup.py pusht hub-backups über einen eigenen Klon in dasselbe Repo — origin läuft

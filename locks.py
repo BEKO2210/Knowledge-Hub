@@ -66,6 +66,14 @@ def project_lock(project: str, timeout: float = 0):
 
 @contextmanager
 def sync_lock(timeout: float = 120):
-    """Exklusiver Zugriff auf das Wissens-Repo (rsync + git). Ein Sync zur Zeit."""
+    """Exklusiver Zugriff auf das Wissens-Repo (rsync + git). Ein Sync zur Zeit.
+
+    Vertrag mit der Shell-Seite: nightly-map.sh und tools/graphify-sync betreten
+    das Repo nur unter derselben Datei (sync-repo.lock via flock(1)). Auch jede
+    PYTHON-seitige Repo-Schreibung MUSS hier durch — insbesondere der
+    Purge-Commit (api/mapping.py: _git_purge_commit), der sich sonst mit einem
+    laufenden rsync+git-Sync verzahnen kann (CE-08). Deshalb NICHT entfernen,
+    selbst wenn der Aufruf im eigenen Modul-Kontext nicht sichtbar ist.
+    """
     with _flock("sync-repo.lock", timeout, "Wissens-Repo-Sync"):
         yield

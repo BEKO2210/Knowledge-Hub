@@ -1,7 +1,7 @@
 [tool.ruff]
 line-length = 110
 target-version = "py312"
-exclude = [".venv", "graphify-out", "build-logs", "web"]
+exclude = [".venv", "graphify-out", "build-logs", "web", ".pypackages", ".firma"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM"]

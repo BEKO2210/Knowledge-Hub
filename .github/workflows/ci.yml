@@ -6,6 +6,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Beide Jobs lesen nur — Token-Rechte explizit auf das Minimum deckeln.
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -16,6 +20,8 @@ jobs:
     timeout-minutes: 15
 
     steps:
+      # Actions bewusst auf den gepflegten Majors checkout@v4 / setup-python@v5;
+      # für maximale Lieferketten-Härtung stattdessen auf Commit-SHAs pinnen.
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
@@ -61,10 +67,20 @@ jobs:
       - name: Keine Secrets im Repo
         run: |
           # Diese Dateien dürfen NIE eingecheckt sein — sie enthalten Schlüssel.
-          for f in vault.enc audit.log oauth_state.json .env; do
-            if git ls-files --error-unmatch "$f" >/dev/null 2>&1; then
-              echo "::error::$f ist eingecheckt — das darf nicht sein"
-              exit 1
-            fi
-          done
+          # Prüfung über ALLE Verzeichnisebenen ((^|/)…$), nicht nur Repo-Root.
+          if git ls-files | grep -E '(^|/)(vault\.enc|audit\.log|oauth_state\.json|\.env|env|config\.yaml)$'; then
+            echo "::error::Mindestens eine Schlüsseldatei ist eingecheckt — das darf nicht sein"
+            exit 1
+          fi
           echo "OK: keine Schlüsseldateien im Repo"
+
+  docker-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      # Das Dockerfile ist das zentrale Deployment-Artefakt für die Kundenabnahme —
+      # ein kaputtes Image darf nicht erst beim Kunden auffallen.
+      - name: Docker-Image bauen
+        run: docker build -t knowledge-hub:ci .

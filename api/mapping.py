@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import threading
 import time
+from contextvars import copy_context
 from pathlib import Path
 
 from starlette.requests import Request
@@ -36,6 +37,18 @@ DEFAULT_IGNORE = """\
 *.chunk.js
 vendor/
 third_party/
+# Secrets gehören nie in den Graphen (zusätzlich zur harten Sperre in extraction.py)
+.env
+.env.*
+*.env
+*.key
+*.pem
+id_rsa*
+*secret*
+*credential*
+!*.example
+!*.sample
+!*.template
 """
 
 TIMER_TEMPLATE = """[Unit]
@@ -52,15 +65,23 @@ WantedBy=timers.target
 
 
 def _sysctl(*args: str) -> tuple[int, str]:
-    proc = subprocess.run(  # noqa: S603 - fixed binary, fixed unit names
-        ["systemctl", "--user", *args], capture_output=True, text=True, timeout=15
-    )
+    try:
+        proc = subprocess.run(  # noqa: S603 - fixed binary, fixed unit names
+            ["systemctl", "--user", *args], capture_output=True, text=True, timeout=15
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        # Docker-Image ohne systemd: sauber degradieren statt als 500 zu sterben —
+        # status zeigt dann „ausgeschaltet", toggle/run melden den Grund als Text.
+        return 1, T("systemd nicht verfügbar (Container ohne systemctl)")
     return proc.returncode, (proc.stdout or proc.stderr).strip()
 
 
 def _timer_time() -> str:
     if TIMER_FILE.exists():
-        m = re.search(r"OnCalendar=\*-\*-\* (\d\d:\d\d)", TIMER_FILE.read_text())
+        m = re.search(
+            r"OnCalendar=\*-\*-\* (\d\d:\d\d)",
+            TIMER_FILE.read_text(encoding="utf-8", errors="replace"),
+        )
         if m:
             return m.group(1)
     return "03:30"
@@ -89,7 +110,9 @@ def _log_costs() -> dict:
     total_cost, total_in, total_out, runs = 0.0, 0, 0, 0
     last = None
     for f in sorted(NIGHTLY_LOG_DIR.glob("nightly-*.log")):
-        text = f.read_text()
+        # errors="replace": Tool-/LLM-Ausgaben mit Nicht-UTF-8-Bytes dürfen die
+        # Kostenanzeige nicht dauerhaft als 500 lahmlegen (BE-07).
+        text = f.read_text(encoding="utf-8", errors="replace")
         # Jede Log-Datei kann mehrere Läufe enthalten (Nacht-Lauf + manuelle Starts)
         sections = text.split("=== nightly-map start")[1:]
         for sec in sections:
@@ -140,8 +163,12 @@ def _parse_runs() -> list[dict]:
     gezählt. Die Knoten-Differenz je Projekt entsteht im Vergleich zum vorigen Lauf.
     """
     runs: list[dict] = []
-    for f in sorted(NIGHTLY_LOG_DIR.glob("nightly-*.log")):
-        lines = f.read_text().splitlines()
+    # Die Oberfläche zeigt ohnehin nur die letzten 60 Läufe, und neue Läufe stehen
+    # verbindlich in den run-*.json — die Textlogs (Alt-Bestand) werden deshalb
+    # gedeckelt gelesen, statt über Jahre unbegrenzt mitzuwachsen (SEC-06).
+    # errors="replace" wie bei _log_costs: kein 500 durch Nicht-UTF-8-Bytes.
+    for f in sorted(NIGHTLY_LOG_DIR.glob("nightly-*.log"))[-120:]:
+        lines = f.read_text(encoding="utf-8", errors="replace").splitlines()
         cur: dict | None = None
         cur_proj: str | None = None
         for line in lines:
@@ -536,6 +563,24 @@ async def mapping_project_add(request: Request) -> JSONResponse:
     entries = config.project_entries()
     if str(p) in {str(Path(e["path"]).expanduser()) for e in entries}:
         return JSONResponse({"error": T("Projekt ist bereits eingetragen")}, status_code=409)
+    # Basenamen-Kollision: ~/a/tool und ~/b/tool werden per rsync --delete auf
+    # denselben Hub-Ordner „tool" gemappt — stiller Datenverlust (BE-07).
+    namenskonflikt = next(
+        (e for e in entries if Path(e["path"]).expanduser().name.lower() == p.name.lower()),
+        None,
+    )
+    if namenskonflikt is not None:
+        return JSONResponse(
+            {
+                "error": T(
+                    "Der Ordnername „{name}“ ist bereits für {path} eingetragen — gleiche Namen "
+                    "würden sich im Hub gegenseitig überschreiben.",
+                    name=p.name,
+                    path=namenskonflikt["path"],
+                )
+            },
+            status_code=409,
+        )
     # Home-Pfade lesbar mit ~ abspeichern
     home = str(Path.home())
     stored = "~" + str(p)[len(home) :] if str(p).startswith(home) else str(p)
@@ -551,17 +596,24 @@ RESERVED_GRAPH_DIRS = {"hub-backups", "_claude"}
 
 def _git_purge_commit(name: str) -> None:
     """Löschung im Wissens-Repo festhalten und pushen — best effort wie graphify-sync."""
+    import locks
+
     try:
+        # graphify-sync betritt das Wissens-Repo nur unter sync-repo.lock — der
+        # Purge-Commit muss sich genauso anstellen, sonst verzahnen sich rsync
+        # und git mitten im Lauf (CE-08). Scheitert die Sperre, wird der Commit
+        # wie bisher still übersprungen (best effort, s. except unten).
+        with locks.sync_lock(timeout=60):
 
-        def git(*args: str) -> subprocess.CompletedProcess:
-            return subprocess.run(  # noqa: S603 - fixed binary, list args
-                ["git", *args], cwd=KNOWLEDGE_ROOT, capture_output=True, text=True, timeout=60
-            )
+            def git(*args: str) -> subprocess.CompletedProcess:
+                return subprocess.run(  # noqa: S603 - fixed binary, list args
+                    ["git", *args], cwd=KNOWLEDGE_ROOT, capture_output=True, text=True, timeout=60
+                )
 
-        git("add", "-A")
-        if git("diff", "--cached", "--quiet").returncode != 0:
-            git("commit", "-q", "-m", f"graph purge: {name}")
-            git("push", "-q", "origin", "main")
+            git("add", "-A")
+            if git("diff", "--cached", "--quiet").returncode != 0:
+                git("commit", "-q", "-m", f"graph purge: {name}")
+                git("push", "-q", "origin", "main")
     except Exception:
         pass  # Repo-Sync darf das Entfernen nie blockieren
 
@@ -854,76 +906,6 @@ async def project_check(request: Request) -> JSONResponse:
 _repairs: dict[str, dict] = {}
 
 
-# Grobe Inhalts-Klassifikation (angelehnt an graphify/detect.py) — nur für
-# verständliche Meldungen, nicht für die eigentliche Extraktion.
-_CODE_SUFFIXES = {
-    ".py",
-    ".ts",
-    ".tsx",
-    ".js",
-    ".jsx",
-    ".mjs",
-    ".go",
-    ".rs",
-    ".java",
-    ".cpp",
-    ".cc",
-    ".c",
-    ".h",
-    ".hpp",
-    ".rb",
-    ".swift",
-    ".kt",
-    ".cs",
-    ".scala",
-    ".php",
-    ".lua",
-    ".ex",
-    ".exs",
-    ".jl",
-    ".vue",
-    ".svelte",
-    ".astro",
-    ".dart",
-    ".sql",
-    ".r",
-    ".sh",
-    ".bash",
-    ".json",
-    ".tf",
-    ".zig",
-}
-_DOC_SUFFIXES = {".md", ".mdx", ".qmd", ".txt", ".rst", ".html", ".yaml", ".yml", ".pdf"}
-_SKIP_DIRS = {
-    ".git",
-    "node_modules",
-    "__pycache__",
-    ".venv",
-    "venv",
-    ".next",
-    "dist",
-    "build",
-    "graphify-out",
-}
-
-
-def _content_counts(p: Path) -> tuple[int, int]:
-    """Zählt grob Code- und Dokumentdateien eines Projekts (code, docs)."""
-    code = docs = 0
-    for f in p.rglob("*"):
-        if not f.is_file() or f.name.startswith("."):
-            continue
-        rel = f.relative_to(p).parts
-        if any(part in _SKIP_DIRS or part.startswith(".") for part in rel[:-1]):
-            continue
-        s = f.suffix.lower()
-        if s in _CODE_SUFFIXES:
-            code += 1
-        elif s in _DOC_SUFFIXES:
-            docs += 1
-    return code, docs
-
-
 def _repair_worker(name: str, p: Path, cfg: dict) -> None:
     """Repariert, was reparierbar ist, und mappt das Projekt danach neu."""
     lines: list[str] = []
@@ -959,40 +941,8 @@ def _repair_worker(name: str, p: Path, cfg: dict) -> None:
         if secret and key:
             env[backend["env"]] = key
         elif secret:
-            label = backend.get("label", backend_name)
-            code_n, doc_n = _content_counts(p)
-            if code_n == 0:
-                # Nur Dokumente/Notizen: Ohne Key würde ein Leerlauf folgen, der mit
-                # „0 gefunden" endet und wie ein Defekt aussieht. Stattdessen ein
-                # klarer Stopp mit Anleitung (kind=action → UI zeigt Hinweis statt Fehler).
-                lines.append(T("Kein Fehler — es fehlt nur der KI-Schlüssel."))
-                lines.append("")
-                lines.append(
-                    T(
-                        "Dieses Projekt besteht aus Dokumenten und Notizen ({docs} Datei(en), kein Code). Ohne KI-Schlüssel kann der Hub daraus keinen Graphen bauen.",
-                        docs=doc_n,
-                    )
-                )
-                lines.append("")
-                lines.append(T("So geht es weiter:"))
-                lines.append(T("1. Tab „Mapping“ öffnen — dort steht die Karte „{label}-Key“.", label=label))
-                lines.append(
-                    T(
-                        "2. Key einfügen und „Key speichern“ drücken. {hint}",
-                        hint=backend.get("key_hint", ""),
-                    ).rstrip()
-                )
-                lines.append(T("3. Danach hier „Erneut versuchen“ drücken — dann wird das Projekt gemappt."))
-                _repairs[name] = {"status": "failed", "kind": "action", "log": "\n".join(lines)}
-                return
             args.append("--code-only")
-            lines.append(
-                T(
-                    "Hinweis: Kein {label}-Key hinterlegt — nur der Code wird gemappt, {docs} Dokument(e) bleiben außen vor. Key im Tab „Mapping“ speichern, dann fließen auch Dokumente ein.",
-                    label=label,
-                    docs=doc_n,
-                )
-            )
+            lines.append(T("Kein API-Key hinterlegt — es wird nur Code gemappt (ohne Dokumente)."))
 
         lines.append(
             T(
@@ -1014,12 +964,19 @@ def _repair_worker(name: str, p: Path, cfg: dict) -> None:
         if proc.returncode != 0:
             _repairs[name] = {"status": "failed", "log": "\n".join(lines)}
             return
-        subprocess.run(
+        proc2 = subprocess.run(
             [config.path(cfg["paths"]["graphify_sync"]), str(p)],  # noqa: S603
             capture_output=True,
             text=True,
             timeout=300,
         )
+        if proc2.returncode != 0:
+            # Ohne rc-Prüfung stand hier „erfolgreich", obwohl der Hub den Graphen
+            # nie bekam (z. B. rc=75 Lock-Timeout beim Sync) — BE-07.
+            lines += (proc2.stdout or proc2.stderr or "").strip().splitlines()[-8:]
+            lines.append(T("Fehler bei der Reparatur: {msg}", msg=f"graphify-sync rc={proc2.returncode}"))
+            _repairs[name] = {"status": "failed", "log": "\n".join(lines)}
+            return
         lines.append(T("✓ Reparatur erfolgreich — Projekt ist wieder gemappt."))
         _repairs[name] = {"status": "done", "log": "\n".join(lines)}
     except Exception as e:  # noqa: BLE001
@@ -1038,7 +995,11 @@ async def project_repair(request: Request) -> JSONResponse:
         return JSONResponse({"error": T("Reparatur läuft bereits")}, status_code=409)
     _repairs[name] = {"status": "running", "log": T("Reparatur gestartet…")}
     vault.audit("PROJECT-REPAIR", target, client="web-ui")
-    threading.Thread(target=_repair_worker, args=(name, p, config.load()), daemon=True).start()
+    # Rohe Threads erben contextvars nicht von selbst — ohne copy_context wären
+    # alle T()-Texte im Worker deutsch, auch wenn der Request englisch war (BE-05).
+    threading.Thread(
+        target=copy_context().run, args=(_repair_worker, name, p, config.load()), daemon=True
+    ).start()
     return JSONResponse({"ok": True})
 
 
@@ -1093,9 +1054,22 @@ async def ignore_put(request: Request) -> JSONResponse:
     return JSONResponse({"ok": True})
 
 
+def _read_tail(f: Path, max_bytes: int = 256 * 1024) -> str:
+    """Nur das Dateiende lesen: Tages-Logs wachsen unbegrenzt — ein Voll-Read für
+    die letzten 120 Zeilen blockiert die Event-Loop zunehmend (SEC-06)."""
+    try:
+        with f.open("rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            fh.seek(max(0, fh.tell() - max_bytes))
+            data = fh.read()
+    except OSError:
+        return ""
+    return data.decode("utf-8", errors="replace")
+
+
 async def mapping_log(request: Request) -> JSONResponse:
     logs = sorted(NIGHTLY_LOG_DIR.glob("nightly-*.log"))
     if not logs:
         return JSONResponse({"lines": [], "file": None})
-    lines = logs[-1].read_text().splitlines()[-120:]
+    lines = _read_tail(logs[-1]).splitlines()[-120:]
     return JSONResponse({"lines": lines, "file": logs[-1].name})

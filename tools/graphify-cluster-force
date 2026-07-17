@@ -1,4 +1,4 @@
-#!/home/belkis/.local/graphify-venv/bin/python3
+#!/usr/bin/env python3
 """graphify cluster-only mit force=True — über die offizielle Bibliotheks-API.
 
 graphifys Schwund-Schutz verweigert das Schreiben der geclusterten graph.json,
@@ -19,10 +19,43 @@ force-Variante und rufen dann die unveränderte offizielle CLI auf.
 from __future__ import annotations
 
 import functools
+import os
 import runpy
+import shutil
 import sys
 
-import graphify.export as export
+
+def _importiere_export():
+    """Importiert graphify.export — notfalls über das Python der graphify-Installation.
+
+    Der Hub läuft meist mit dem System-Python (oder einer eigenen venv), graphify
+    selbst aber in einer pipx-/pip---user-Installation. Deren Interpreter steht im
+    Shebang des graphify-Einstiegspunkts — darüber finden wir ihn ohne hartkodierte
+    Pfade und starten dieses Skript damit einmalig neu.
+    """
+    try:
+        import graphify.export as export
+
+        return export
+    except ModuleNotFoundError:
+        if os.environ.get("_GRAPHIFY_CF_REEXEC") == "1":
+            raise  # schon einmal neu gestartet — dann ist graphify wirklich nicht da
+        graphify_bin = shutil.which("graphify") or os.path.expanduser("~/.local/bin/graphify")
+        try:
+            with open(graphify_bin, "rb") as f:
+                shebang = f.readline().decode("utf-8", "replace").strip()
+        except OSError as e:
+            raise ModuleNotFoundError(
+                f"graphify nicht gefunden ({e}) — Installation: pipx install graphifyy"
+            ) from e
+        if not shebang.startswith("#!"):
+            raise ModuleNotFoundError(f"{graphify_bin} ohne Shebang — graphify-Interpreter unbekannt")
+        os.environ["_GRAPHIFY_CF_REEXEC"] = "1"
+        os.execv(shebang[2:].split()[0], [os.path.abspath(sys.argv[0]), *sys.argv[1:]])
+        raise AssertionError("unreachable")  # execv kehrt nicht zurück
+
+
+export = _importiere_export()
 
 export.to_json = functools.partial(export.to_json, force=True)
 

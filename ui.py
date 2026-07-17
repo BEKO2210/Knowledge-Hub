@@ -8,6 +8,7 @@ Markup, Stylesheet und Skript liegen als echte Dateien in web/.
 from __future__ import annotations
 
 import hashlib
+import html
 import json
 import secrets as _rnd
 import time
@@ -18,7 +19,7 @@ from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, JSONResponse, Response
+from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from starlette.routing import Route
 
 import config
@@ -65,6 +66,10 @@ async def _on_unerwartet(request: Request, exc: Exception) -> JSONResponse:
             "ref": ref,
         },
         status_code=500,
+        # Diese Antwort entsteht in Starlettes ServerErrorMiddleware — AUSSERHALB der
+        # Nutzer-Middleware-Kette; SecurityHeaders sieht sie nie. Darum trägt sie ihre
+        # Schutz-Header selbst (Fehlerseiten zusätzlich mit no-store).
+        headers=_schutz_headers(),
     )
 
 
@@ -202,7 +207,10 @@ async def manifest(request: Request) -> JSONResponse:
             "name": name,
             "short_name": name.split()[0] if name else "Hub",
             "description": "Self-hosted knowledge graphs, hybrid search and an encrypted secrets vault.",
-            "start_url": "/ui",
+            # Trailing Slash: Der Service-Worker-Scope ist "/ui/" (Ordner der sw.js) und
+            # deckt "/ui" präfixbasiert NICHT ab — ohne Slash wäre der Offline-Start der
+            # installierten PWA wirkungslos. /ui leitet deshalb per 301 auf /ui/ weiter.
+            "start_url": "/ui/",
             "scope": "/ui",
             "display": "standalone",
             "background_color": "#0e1526",
@@ -218,6 +226,8 @@ async def manifest(request: Request) -> JSONResponse:
                 },
             ],
         },
+        # Spezifizierter Manifest-MIME statt generischem application/json.
+        media_type="application/manifest+json",
         headers={"Cache-Control": "public, max-age=86400"},
     )
 
@@ -251,9 +261,12 @@ def brand_html(name: str) -> str:
 def render(template: str) -> str:
     """Branding und Asset-Version zur Laufzeit einsetzen (Namensänderung wirkt ohne Neustart)."""
     name = config.load()["branding"]["name"]
+    # __BRAND__ landet u. a. im <title> — ohne Escape bricht ein Name mit </title>
+    # aus dem Kontext aus (Markup-Injection über die Admin-Config). brand_html()
+    # escaped seine Wörter bereits selbst.
     return (
         template.replace("__BRAND_HTML__", brand_html(name))
-        .replace("__BRAND__", name)
+        .replace("__BRAND__", html.escape(name))
         .replace("__V__", ASSET_V)
     )
 
@@ -277,6 +290,12 @@ cp /tmp/wiederherstellung/env ~/.config/knowledge-mcp/env
 systemctl --user restart knowledge-mcp</pre>
 <p>Die Backup-Passphrase steht in deinem Passwort-Manager. Danach ist alles wieder da.</p>
 </div></body></html>"""
+
+
+async def ui_umleitung(request: Request) -> RedirectResponse:
+    """Kanonische Form mit Trailing Slash: Manifest-start_url und SW-Scope leben
+    unter /ui/ — wer /ui aufruft, wird dorthin weitergeleitet (301, GET-only)."""
+    return RedirectResponse("/ui/", status_code=301)
 
 
 async def page(request: Request) -> HTMLResponse:
@@ -315,12 +334,13 @@ class Sprache(BaseHTTPMiddleware):
 
     Fällt sie weg (curl, KI-Client), entscheidet Accept-Language. So bekommt jeder
     Aufrufer die Diagnose in seiner Sprache, ohne dass der Server einen globalen
-    Zustand mit sich herumträgt.
+    Zustand mit sich herumträgt. Ohne (bekannte) Angabe gilt Deutsch — passend zum
+    i18n-Default ``default="de"``; nur ein explizites „en" schaltet auf Englisch.
     """
 
     async def dispatch(self, request, call_next):
         gewuenscht = request.headers.get("x-lang") or request.headers.get("accept-language", "")
-        i18n.set_lang("en" if not gewuenscht.lower().startswith("de") else "de")
+        i18n.set_lang("en" if gewuenscht.lower().startswith("en") else "de")
         return await call_next(request)
 
 
@@ -352,6 +372,27 @@ class SchreibBremse(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+CSP = (
+    "default-src 'self'; script-src 'self'; "
+    "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+    "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+)
+
+
+def _schutz_headers() -> dict[str, str]:
+    """Die Header der SecurityHeaders-Middleware als dict — für Antworten, die an
+    der Middleware-Kette VORBEI laufen (500er aus der ServerErrorMiddleware).
+    Fehlerseiten bekommen zusätzlich no-store: Sie gehören in keinen Cache."""
+    return {
+        "Content-Security-Policy": CSP,
+        "X-Content-Type-Options": "nosniff",
+        "X-Frame-Options": "DENY",
+        "Referrer-Policy": "no-referrer",
+        "Permissions-Policy": "geolocation=(), microphone=(), camera=()",
+        "Cache-Control": "no-store",
+    }
+
+
 class SecurityHeaders(BaseHTTPMiddleware):
     """Schutz-Header für alle UI-Antworten."""
 
@@ -364,12 +405,7 @@ class SecurityHeaders(BaseHTTPMiddleware):
         # ausführen; das Risiko ist eine andere Klasse als Inline-SKRIPT.
         # setdefault statt Zuweisung: Der Setup-Wizard bringt seine eigene CSP mit
         # (Hash auf seinen einzigen Skriptblock) — die darf hier nicht überschrieben werden.
-        resp.headers.setdefault(
-            "Content-Security-Policy",
-            "default-src 'self'; script-src 'self'; "
-            "style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
-            "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
-        )
+        resp.headers.setdefault("Content-Security-Policy", CSP)
         resp.headers["X-Content-Type-Options"] = "nosniff"
         resp.headers["X-Frame-Options"] = "DENY"
         resp.headers["Referrer-Policy"] = "no-referrer"
@@ -394,8 +430,11 @@ import setup_wizard  # noqa: E402 - nach config/vault, vermeidet Zirkelimport
 ui_app = Starlette(
     middleware=[
         Middleware(Sprache),
-        Middleware(SchreibBremse),
+        # SecurityHeaders AUSSERHALB der SchreibBremse: Sonst gingen deren
+        # 429-Antworten ohne jede Schutz-Header raus (früher in dieser Liste hinter
+        # ihr = innerhalb; Middleware wird von außen nach innen durchlaufen).
         Middleware(SecurityHeaders),
+        Middleware(SchreibBremse),
         Middleware(VaultGate),
     ],
     exception_handlers={
@@ -408,7 +447,7 @@ ui_app = Starlette(
         Exception: _on_unerwartet,
     },
     routes=[
-        Route("/ui", page),
+        Route("/ui", ui_umleitung),
         Route("/ui/", page),
         Route("/ui/setup", setup_wizard.wizard_page),
         Route("/ui/setup/status", setup_wizard.setup_status),
@@ -424,6 +463,7 @@ ui_app = Starlette(
         Route("/ui/manifest.json", manifest),
         Route("/ui/sw.js", service_worker),
         Route("/ui/api/login", auth.login, methods=["POST"]),
+        Route("/ui/api/logout", auth.logout, methods=["POST"]),
         Route("/ui/api/projects", knowledge.projects),
         Route("/ui/api/graph/{project}", knowledge.graph),
         Route("/ui/api/ask/{project}", knowledge.graph_ask, methods=["POST"]),

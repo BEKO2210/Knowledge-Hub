@@ -26,10 +26,13 @@ import argparse
 import getpass
 import io
 import os
+import shlex
+import shutil
 import sys
 import tarfile
 import tempfile
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -40,6 +43,11 @@ SALT_LEN, NONCE_LEN = 16, 12
 AAD = b"knowledge-hub:backup:v1"
 # scrypt-Parameter: bewusst teuer (~100 ms), damit Rateangriffe auf die Passphrase
 # unattraktiv werden. n=2^16 braucht ~64 MB Speicher pro Versuch.
+# HINWEIS (SEC-03/OWASP): OWASP empfiehlt inzwischen n=2^17 als Minimum. Der Wert
+# bleibt bewusst bei 2^16: Die Parameter stehen NICHT im KHUB1-Archiv (nur Salt +
+# Nonce), eine Erhöhung liefe also nur für neue Archive und machte alle älteren
+# ohne Migrationspfad unlesbar. Kompatibilität geht vor; die Passphrase (≥ 12
+# Zeichen, offline verwahrt) deckt das Restrisiko mit ab.
 SCRYPT_N, SCRYPT_R, SCRYPT_P = 2**16, 8, 1
 
 
@@ -109,12 +117,22 @@ def contents(blob: bytes, passphrase: str) -> list[str]:
 def restore(blob: bytes, passphrase: str, dest: Path) -> list[str]:
     """Archiv nach `dest` auspacken (0600 für alles Sensible)."""
     dest.mkdir(parents=True, exist_ok=True)
+    basis = dest.resolve()
     written = []
     with tarfile.open(fileobj=io.BytesIO(open_archive(blob, passphrase)), mode="r:gz") as tar:
         for member in tar.getmembers():
-            if not member.isfile() or "/" in member.name or member.name.startswith("."):
+            if (
+                not member.isfile()
+                or "/" in member.name
+                or "\\" in member.name  # Backslash-Traversal (Windows-Separator) ebenfalls blocken
+                or member.name.startswith(".")
+            ):
                 continue  # keine Pfade aus dem Archiv übernehmen (Traversal-Schutz)
             target = dest / member.name
+            # Vorab platzierte Symlinks im Zielordner niemals folgen — sie könnten
+            # auf Dateien AUSSERHALB von dest zeigen (SEC-08, Multi-User-/tmp-Falle).
+            if target.is_symlink() or not target.resolve().is_relative_to(basis):
+                continue
             data = tar.extractfile(member)
             if data is None:
                 continue
@@ -173,11 +191,39 @@ def _target_local(blob: bytes, name: str, t: dict) -> str:
 CACHE_DIR = Path(os.environ.get("KMCP_CACHE_DIR", str(Path.home() / ".cache" / "knowledge-hub")))
 
 
-def _tokenized(url: str, token: str) -> str:
-    """Zugangstoken in die HTTPS-URL einsetzen (nur im Speicher, nie auf Platte)."""
-    if not token or not url.startswith("https://"):
-        return url
-    return url.replace("https://", f"https://x-access-token:{token}@", 1)
+@contextmanager
+def _git_auth(token: str):
+    """Umgebung für git-Aufrufe MIT Token — ohne ihn je in argv oder eine URL zu setzen.
+
+    Früher wurde der Token in die Remote-URL eingebettet (https://x-access-token:…@):
+    während clone/fetch/push für jeden lokalen Benutzer in /proc/<pid>/cmdline lesbar
+    und danach persistent in .git/config bzw. .git/FETCH_HEAD (SEC-03/CE-10). Stattdessen
+    bekommt git die Zugangsdaten über ein kurzlebiges GIT_ASKPASS-Skript: Der Token
+    liegt nur in einer 0600-Datei in einem 0700-Ordner und wird danach entfernt.
+    """
+    if not token:
+        yield None  # None = unveränderte Umgebung (z. B. repo:-Modus mit SSH)
+        return
+    authdir = Path(tempfile.mkdtemp(prefix="khub-git-auth-"))
+    try:
+        authdir.chmod(0o700)
+        skript = authdir / "askpass.sh"
+        skript.write_text(
+            "#!/bin/sh\n"
+            "# git fragt nacheinander nach Username und Password — der Prompt steht in $1.\n"
+            'case "$1" in\n'
+            "  *sername*) printf '%s' 'x-access-token' ;;\n"
+            f"  *) printf '%s' {shlex.quote(token)} ;;\n"
+            "esac\n",
+            encoding="utf-8",
+        )
+        skript.chmod(0o700)
+        env = dict(os.environ)
+        env["GIT_ASKPASS"] = str(skript)
+        env["GIT_TERMINAL_PROMPT"] = "0"  # nie interaktiv fragen (unbeaufsichtigter Lauf)
+        yield env
+    finally:
+        shutil.rmtree(authdir, ignore_errors=True)
 
 
 def _target_git(blob: bytes, name: str, t: dict, token: str = "") -> str:
@@ -186,75 +232,87 @@ def _target_git(blob: bytes, name: str, t: dict, token: str = "") -> str:
     Zwei Betriebsarten:
       * `repo:` — ein bereits vorhandener lokaler Klon (nutzt dessen Zugangsdaten, z. B. SSH).
       * `url:`  — eine Repo-Adresse; der Klon wird im Cache angelegt, Authentifizierung über
-        einen Zugriffstoken aus dem Vault. Der Token wird NICHT in .git/config gespeichert.
+        einen Zugriffstoken aus dem Vault. Der Token wird NICHT in .git/config gespeichert
+        und steht auch weder in argv noch in FETCH_HEAD — git bekommt ihn per GIT_ASKPASS
+        (_git_auth); alle Befehle laufen mit der URL OHNE eingebettete Zugangsdaten.
     """
     import subprocess
 
     branch = str(t.get("branch", "main"))
     url = str(t.get("url", "")).strip()
 
-    if url:
-        repo = CACHE_DIR / "backup-repo"
-        CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        if not (repo / ".git").is_dir():
-            cl = subprocess.run(  # noqa: S603,S607
-                ["git", "clone", "--depth", "1", _tokenized(url, token), str(repo)],
-                capture_output=True,
-                text=True,
-                timeout=300,
-            )
-            if cl.returncode != 0:
-                err = (cl.stderr or "").replace(token, "***") if token else (cl.stderr or "")
-                raise RuntimeError(f"clone fehlgeschlagen: {err.strip()[:140]}")
-            # Token sofort aus der Repo-Konfiguration entfernen
+    with _git_auth(token) as auth_env:
+        if url:
+            repo = CACHE_DIR / "backup-repo"
+            CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            if not (repo / ".git").is_dir():
+                cl = subprocess.run(  # noqa: S603,S607
+                    ["git", "clone", "--depth", "1", url, str(repo)],
+                    capture_output=True,
+                    text=True,
+                    timeout=300,
+                    env=auth_env,
+                )
+                if cl.returncode != 0:
+                    err = (cl.stderr or "").replace(token, "***") if token else (cl.stderr or "")
+                    raise RuntimeError(f"clone fehlgeschlagen: {err.strip()[:140]}")
+            # Remote-URL grundsätzlich frei von Zugangsdaten halten — auch bei älteren
+            # Cache-Klonen, die noch eine Token-URL in .git/config tragen könnten.
             subprocess.run(
                 ["git", "-C", str(repo), "remote", "set-url", "origin", url],  # noqa: S603,S607
                 capture_output=True,
                 timeout=30,
             )
-    else:
-        repo = Path(str(t["repo"])).expanduser()
-        if not (repo / ".git").is_dir():
-            raise FileNotFoundError(f"{repo} ist kein Git-Repository")
+        else:
+            repo = Path(str(t["repo"])).expanduser()
+            if not (repo / ".git").is_dir():
+                raise FileNotFoundError(f"{repo} ist kein Git-Repository")
 
-    def git(*args: str) -> subprocess.CompletedProcess:
-        return subprocess.run(
-            ["git", "-C", str(repo), *args],  # noqa: S603,S607
-            capture_output=True,
-            text=True,
-            timeout=300,
+        def git(*args: str) -> subprocess.CompletedProcess:
+            return subprocess.run(
+                ["git", "-C", str(repo), *args],  # noqa: S603,S607
+                capture_output=True,
+                text=True,
+                timeout=300,
+                env=auth_env,
+            )
+
+        if url:
+            # fetch über origin (URL ohne Token) → FETCH_HEAD enthält keine Zugangsdaten
+            git("fetch", "--depth", "1", "origin", branch)
+            git("reset", "--hard", "FETCH_HEAD")
+            # FETCH_HEAD nach Gebrauch entsorgen: Bei Läufen vor dieser Härtung stand
+            # der Token dort im Klartext („branch '…' of https://x-access-token:…@"),
+            # und git schreibt die Datei nicht zwingend bei jedem fetch neu — Reste
+            # sollen nicht im Cache-Klon liegen bleiben (SEC-03).
+            (repo / ".git" / "FETCH_HEAD").unlink(missing_ok=True)
+
+        sub = repo / str(t.get("subdir", "hub-backups"))
+        sub.mkdir(parents=True, exist_ok=True)
+        out = sub / name
+        _write_atomar(out, blob)
+        _prune(list(sub.glob("hub-*.khub")), int(t.get("keep", 14)))
+
+        git("add", "-A", str(sub.relative_to(repo)))
+        if git("diff", "--cached", "--quiet").returncode == 0:
+            return f"git: keine Änderung ({repo.name})"
+        git(
+            "-c",
+            "user.email=hub@localhost",
+            "-c",
+            "user.name=Knowledge Hub",
+            "commit",
+            "-q",
+            "-m",
+            f"hub-backup: {name}",
         )
 
-    if url:
-        git("fetch", "--depth", "1", _tokenized(url, token), branch)
-        git("reset", "--hard", "FETCH_HEAD")
-
-    sub = repo / str(t.get("subdir", "hub-backups"))
-    sub.mkdir(parents=True, exist_ok=True)
-    out = sub / name
-    _write_atomar(out, blob)
-    _prune(list(sub.glob("hub-*.khub")), int(t.get("keep", 14)))
-
-    git("add", "-A", str(sub.relative_to(repo)))
-    if git("diff", "--cached", "--quiet").returncode == 0:
-        return f"git: keine Änderung ({repo.name})"
-    git(
-        "-c",
-        "user.email=hub@localhost",
-        "-c",
-        "user.name=Knowledge Hub",
-        "commit",
-        "-q",
-        "-m",
-        f"hub-backup: {name}",
-    )
-
-    push = git("push", "-q", _tokenized(url, token) if url else "origin", f"HEAD:{branch}")
-    if push.returncode != 0:
-        err = push.stderr or ""
-        if token:
-            err = err.replace(token, "***")  # Token niemals ins Log
-        raise RuntimeError(f"push fehlgeschlagen: {err.strip()[:140]}")
+        push = git("push", "-q", "origin", f"HEAD:{branch}")
+        if push.returncode != 0:
+            err = push.stderr or ""
+            if token:
+                err = err.replace(token, "***")  # Token niemals ins Log
+            raise RuntimeError(f"push fehlgeschlagen: {err.strip()[:140]}")
     where = url.split("/")[-1].removesuffix(".git") if url else repo.name
     return f"git: {where}/{t.get('subdir', 'hub-backups')} gepusht"
 

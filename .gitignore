@@ -11,8 +11,11 @@ ratelimit.json
 mapping_dismissed.json
 answers/
 .env
+.env.*
 env
 config.yaml
+*.key
+*.pem
 
 # Laufzeit-Artefakte
 build-logs/
@@ -20,6 +23,9 @@ graphify-out/
 backups/
 *.khub
 *.tmp
+errors_ack.json
+projects/
+data/
 
 # Python
 .venv/
@@ -34,6 +40,8 @@ node_modules/
 
 # Interne Planung: enthält Geschäftsplanung und persönliche Daten — bleibt privat
 ROADMAP.md
+plan.md
+.firma/
 chunk-index/
 .coverage
 backup-repo/

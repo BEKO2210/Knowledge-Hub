@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import time
@@ -93,6 +94,16 @@ def _validate(doc: dict) -> None:
         ) from e
 
 
+def _serialisieren(doc: dict, **kwargs: object) -> str:
+    """JSON ohne NaN/Infinity — solche Werte bestehen die Schema-Prüfung (NaN-Vergleiche
+    sind immer False), erzeugen aber als ``NaN``-Literal ungültiges JSON, an dem das
+    JSON.parse der Website scheitert. Daher wie ein Schema-Verstoß behandeln."""
+    try:
+        return json.dumps(doc, ensure_ascii=False, allow_nan=False, **kwargs)
+    except ValueError as e:
+        raise PublicDataInvalid(f"Nicht darstellbarer Zahlenwert (NaN/Infinity): {e}") from e
+
+
 def build(
     tests: dict,
     graph: dict,
@@ -119,15 +130,20 @@ def build(
         if re.fullmatch(r"[0-9a-f]{7}", c):
             doc["release"] = {"commit": c}
     _validate(doc)
-    _leak_scan(json.dumps(doc, ensure_ascii=False))
+    _leak_scan(_serialisieren(doc))
     return doc
 
 
 def write(doc: dict, out_dir: Path) -> Path:
-    """public-data.json + Manifest (Hash) atomar schreiben. Erneut leak-gescannt vor dem Schreiben."""
+    """public-data.json + Manifest (Hash) atomar schreiben.
+
+    Letzte Kontrollstelle vor dem Schreiben: erneute Schema-Validierung (Fremdfelder
+    werden abgelehnt) und Leak-Scan — ein Dokument, das build() umgangen hat, darf
+    nicht schwächer geprüft werden als eines aus build()."""
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    body = json.dumps(doc, ensure_ascii=False, indent=2)
+    _validate(doc)  # Schema-Revalidierung: nur whiteliste Felder/Werte dürfen raus
+    body = _serialisieren(doc, indent=2)
     _leak_scan(body)  # letzte Kontrolle unmittelbar vor dem Schreiben
     _write_atomar(out_dir / "public-data.json", body)
     manifest = {
@@ -171,8 +187,22 @@ def gather_benchmark(bench_dir: Path | None = None) -> dict:
             raise PublicSourceError(f"Kein Benchmark-Lauf für {pattern!r} in {res}")
         return json.loads(Path(files[-1]).read_text(encoding="utf-8"))
 
+    def hit_rate(totals: dict, engine: str, budget: str) -> float:
+        # Defensiv lesen: ein Lauf mit anderen/fehlenden Budgets (z. B. nur 800) darf
+        # nicht mit KeyError abbrechen, sondern bricht als dokumentierter Quellfehler
+        # sicher ab. NaN/Infinity wird ebenfalls abgelehnt (ungültiges JSON).
+        eintrag = totals.get(budget)
+        wert = eintrag.get("hit_rate") if isinstance(eintrag, dict) else None
+        if not isinstance(wert, (int, float)) or isinstance(wert, bool) or not math.isfinite(wert):
+            raise PublicSourceError(
+                f"Benchmark-Lauf ({engine}) ohne verwertbare Trefferquote für Budget {budget} — Abbruch."
+            )
+        return round(float(wert), 3)
+
     hy = newest("*hybrid*.json")
-    gf = newest("2026-*graphify*.json")
+    # Kein Jahr im Muster: mit "2026-*graphify*.json" fände der Generator ab dem
+    # Jahreswechsel keinen Lauf mehr und bliebe dauerhaft auf dem alten Stand (stale).
+    gf = newest("*graphify*.json")
     ht, gt = hy.get("totals", {}), gf.get("totals", {})
     # Fragen/Projekte aus dem hybrid-Lauf (der vollständige Gold-Satz)
     projects = hy.get("projects", {})
@@ -186,12 +216,12 @@ def gather_benchmark(bench_dir: Path | None = None) -> dict:
         "budgets": sorted(int(b) for b in ht if b.isdigit()) or [400, 1200],
         "engines": {
             "hybrid": {
-                "hit_rate_400": round(ht["400"]["hit_rate"], 3),
-                "hit_rate_1200": round(ht["1200"]["hit_rate"], 3),
+                "hit_rate_400": hit_rate(ht, "hybrid", "400"),
+                "hit_rate_1200": hit_rate(ht, "hybrid", "1200"),
             },
             "graphify": {
-                "hit_rate_400": round(gt["400"]["hit_rate"], 3),
-                "hit_rate_1200": round(gt["1200"]["hit_rate"], 3),
+                "hit_rate_400": hit_rate(gt, "graphify", "400"),
+                "hit_rate_1200": hit_rate(gt, "graphify", "1200"),
             },
         },
     }

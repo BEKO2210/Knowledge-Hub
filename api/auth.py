@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import os
 import re
 
@@ -59,6 +60,22 @@ async def login(request: Request) -> JSONResponse:
     return JSONResponse({"token": payload["access_token"], "expires_in": payload["expires_in"]})
 
 
+async def logout(request: Request) -> JSONResponse:
+    """Server-seitiges Abmelden: das aktuell benutzte Token verfällt sofort (BE-03/SEC-07).
+
+    Früher löschte die Oberfläche das Token nur lokal — es blieb bis zu 30 Tage
+    gültig. Hier wird die zum Auth-Header gehörende Sitzung widerrufen. Antwort
+    ist bewusst immer {"ok": true} (idempotent): Ist das Token schon abgelaufen
+    oder widerrufen, gibt es nichts mehr zu tun. Authentifizierung läuft wie bei
+    allen /ui/api/*-Routen über das Bearer-Gate in server.py.
+    """
+    sid = await asyncio.to_thread(oauth.session_of, _bearer(request))
+    if sid:
+        await asyncio.to_thread(oauth.revoke_session, sid)
+        vault.audit("LOGOUT", sid, client="web-ui")
+    return JSONResponse({"ok": True})
+
+
 async def unblock_ips(request: Request) -> JSONResponse:
     """Alle IP-Sperren aufheben (falls man sich selbst ausgesperrt hat)."""
     n = ratelimit.unblock()
@@ -77,6 +94,14 @@ async def sessions_list(request: Request) -> JSONResponse:
     # unsichtbar bliebe. Es lässt sich nicht per Klick widerrufen (dafür muss der
     # Wert in der env-Datei getauscht werden) — aber man muss wissen, dass es existiert.
     if os.environ.get("MCP_TOKEN"):
+        # Konstantzeit vergleichen (Timing-Leck, BE-03) und byteweise in UTF-8:
+        # compare_digest wirft auf str mit Nicht-ASCII einen TypeError → 500.
+        try:
+            ist_statisch = hmac.compare_digest(
+                _bearer(request).encode("utf-8"), os.environ["MCP_TOKEN"].encode("utf-8")
+            )
+        except UnicodeError:  # verwaiste Surrogate im Header → kein Match
+            ist_statisch = False
         items.append(
             {
                 "id": "static",
@@ -86,7 +111,7 @@ async def sessions_list(request: Request) -> JSONResponse:
                 "last_seen": None,
                 "expires": None,
                 "ua": "",
-                "current": _bearer(request) == os.environ["MCP_TOKEN"],
+                "current": ist_statisch,
                 "revocable": False,
                 "note": T(
                     "Läuft nie ab. Zum Widerrufen den Wert MCP_TOKEN in "
@@ -116,6 +141,23 @@ async def sessions_revoke_all(request: Request) -> JSONResponse:
     n = oauth.revoke_all(except_sid=me)
     vault.audit("TOKEN-REVOKE-ALL", f"{n} Sitzungen", client="web-ui")
     return JSONResponse({"ok": True, "revoked": n})
+
+
+def revoke_alle_sitzungen() -> int:
+    """ALLE Sitzungen widerrufen (Web UND Geräte) — Rückgabe: Anzahl der Sitzungen.
+
+    Vertrag mit api/system.py: Aufruf nach erfolgreichem Passwortwechsel (SEC-07).
+    Ein mit dem alten Passwort erbeutetes Token (Web 30 Tage, Geräte 365 Tage)
+    darf nicht weiterlaufen — darum ohne Ausnahme, auch die rufende Sitzung
+    verfällt und eine Neu-Anmeldung wird überall fällig.
+    """
+    n = oauth.revoke_all()
+    vault.audit("TOKEN-REVOKE-ALL", f"{n} Sitzungen (Passwortwechsel)", client="web-ui")
+    return n
+
+
+# FIX-A greift defensiv auf beide Namen zu (BUGTRACKER nennt „auth.revoke_all").
+revoke_all = revoke_alle_sitzungen
 
 
 async def connect_info(request: Request) -> JSONResponse:

@@ -6,6 +6,37 @@ Alle nennenswerten Änderungen an diesem Projekt. Format angelehnt an
 
 ## [Unveröffentlicht]
 
+### Sicherheit (Firmen-Audit)
+- **2FA im OAuth-Consent erzwungen.** `/oauth/register` und `/oauth/authorize` prüften nur das
+  Passwort — bei aktivem 2FA verlangen sie jetzt zusätzlich einen gültigen TOTP-Code.
+- **2FA-Härtung im UI.** Einrichtung und Deaktivierung setzen den Nachweis des aktuellen
+  Zustands voraus; eine gekaperte Sitzung kann Zwei-Faktor nicht mehr lautlos abschalten.
+- **Geschützte Secret-Namen.** Reservierte Einträge wie das 2FA-Blob (`__2fa__`) lassen sich
+  über die Secrets-API nicht mehr überschreiben oder auslesen.
+- **Rate-Limit vertraut Proxy-Headern nicht mehr blind.** `cf-connecting-ip` & Co. werden nur
+  noch von vertrauenswürdigen Proxies übernommen — Header-Rotation hebelt die Login- und
+  TOTP-Sperren nicht mehr aus.
+- **Keine Secret-Dateien mehr in der LLM-Extraktion.** `.env` und ähnliche Dateien werden vor
+  dem Versand an externe Modelle ausgeschlossen (Ignore-Listen gehärtet).
+- **Docker-Doku zu Volumes.** Compose-Datei und README sagen jetzt ausdrücklich, dass
+  Konfiguration, Vault und Notizen im `/data`-Volume liegen und Projekte schreibbar
+  eingehängt sein müssen.
+
+### Behoben (Firmen-Audit)
+- **`systemctl`-Aufrufe abgesichert.** Ohne systemd (Container) liefen Health- und
+  Mapping-Endpunkte auf `FileNotFoundError` (HTTP 500); sie fallen jetzt sauber zurück.
+- **Event-Loop-Blockaden entfernt.** `graph_explain` und die Health-Checks blockieren den
+  Server nicht mehr synchron (zuvor bis zu 120 s bzw. 60 s pro Anfrage).
+- **`/healthz/ready` gehärtet.** Der unauthentifizierte Endpunkt parst nicht mehr pro Anfrage
+  alle Graphen synchron — die ungedrosselte DoS-Fläche ist geschlossen.
+- **Stiller Graph-Totalverlust verhindert.** Fehlerhafte Pfadfilterung (`*/data/*`,
+  `*/build/*`) leerte den Extraktions-Scan; ein leeres Ergebnis überschreibt den
+  bestehenden Graph und dessen Cache nicht mehr.
+- **Atomare Schreibzugriffe.** Zustandsdateien (u. a. `oauth_state.json`) werden atomar
+  ersetzt — ein Abbruch hinterlässt keinen halben, unlesbaren Stand mehr.
+- **Laufzeit-Abhängigkeit ergänzt.** `jsonschema` fehlte in `requirements.txt` — der
+  Public-Data-Export starb im Container am `ImportError`.
+
 ### Hinzugefügt
 - **Eigene Extraktion ist jetzt der Standard (`extraction.py`).** Inkrementell über einen
   Datei-Hash-Cache (unveränderte Dateien kosten keinen LLM-Aufruf), volle Coverage inkl.

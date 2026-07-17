@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import json
 import os
 import platform
 import re
+import subprocess
 import threading
 import time
 import urllib.error
@@ -26,6 +28,7 @@ from api.common import (
     GRAPHIFY_BIN,
     KNOWLEDGE_ROOT,
     _check,
+    _client_ip,
     _dir_size,
     _human,
     json_object,
@@ -105,12 +108,22 @@ async def twofa_status(request: Request) -> JSONResponse:
 
 
 async def twofa_setup(request: Request) -> JSONResponse:
-    """Neues Geheimnis + QR erzeugen (noch nicht aktiv)."""
+    """Neues Geheimnis + QR erzeugen (noch nicht aktiv).
+
+    Bei AKTIVEM 2FA gibt es kein neues Setup (409): Eine gekaperte Sitzung könnte
+    sonst über setup→disable 2FA ohne jeden Code abschalten (P0-1) — erst
+    abschalten (mit Code), dann neu einrichten. begin_setup guardet zusätzlich
+    selbst (None), falls zwischen Guard und Aufruf aktiviert wurde.
+    """
     import totp
 
+    if await asyncio.to_thread(totp.is_enabled):
+        return JSONResponse({"error": T("Zwei-Faktor ist bereits aktiv.")}, status_code=409)
     account = "hub"
     issuer = config.load()["branding"]["name"]
     data = await asyncio.to_thread(totp.begin_setup, account, issuer)
+    if data is None:  # Rennen: parallel aktiviert worden
+        return JSONResponse({"error": T("Zwei-Faktor ist bereits aktiv.")}, status_code=409)
     return JSONResponse(data)
 
 
@@ -133,12 +146,26 @@ async def twofa_enable(request: Request) -> JSONResponse:
 
 async def twofa_disable(request: Request) -> JSONResponse:
     """2FA abschalten — verlangt einen gültigen Code (Bestätigung, dass es der
-    Besitzer ist, nicht ein übernommener Browser)."""
+    Besitzer ist, nicht ein übernommener Browser).
+
+    Fehlversuche zählen in denselben Zähler wie der Login (5 Versuche / 15 min
+    pro IP) und landen im Audit-Log — sonst könnte eine gekaperte Sitzung Codes
+    spurlos durchraten (SEC-02)."""
     import totp
 
     body = await json_object(request)
-    if totp.is_enabled() and not totp.check(str(body.get("code", ""))):
-        return JSONResponse({"error": T("Zum Abschalten den aktuellen Code eingeben.")}, status_code=400)
+    ip = _client_ip(request)
+    if await asyncio.to_thread(totp.is_enabled):
+        if not ratelimit.check("login", ip):
+            vault.audit("2FA-DISABLE-BLOCKED", ip, client="web-ui")
+            return JSONResponse(
+                {"error": T("Zu viele Fehlversuche — bitte 15 Minuten warten.")}, status_code=429
+            )
+        if not await asyncio.to_thread(totp.check, str(body.get("code", ""))):
+            ratelimit.record_failure("login", ip)
+            vault.audit("2FA-DISABLE-FAIL", ip, client="web-ui")
+            await asyncio.sleep(1)  # Bremse gegen Rateversuche (wie beim Login)
+            return JSONResponse({"error": T("Zum Abschalten den aktuellen Code eingeben.")}, status_code=400)
     await asyncio.to_thread(totp.disable)
     return JSONResponse({"ok": True})
 
@@ -178,6 +205,21 @@ async def vault_password(request: Request) -> JSONResponse:
         # meldet sofort ab: Wer sich beim Passwortwechsel vertippte, flog raus, statt
         # „Aktuelles Passwort stimmt nicht." zu lesen.
         return JSONResponse({"error": T("Aktuelles Passwort stimmt nicht.")}, status_code=403)
+    # Nach dem Passwortwechsel alle bestehenden Sitzungen widerrufen (SEC-07):
+    # Ein mit dem alten Passwort erbeutetes Token (30 Tage gültig) darf nicht
+    # weiterlaufen. Die Funktion liefert FIX-O in api/auth.py — der BUGTRACKER
+    # nennt sie „auth.revoke_all", vergeben war „revoke_alle_sitzungen"; darum
+    # defensiv über beide Namen und komplett fehlertolerant: Der Passwortwechsel
+    # selbst ist schon erfolgreich und darf am (noch) fehlenden Widerruf nicht
+    # scheitern.
+    try:
+        from api import auth as _auth
+
+        _revoke = getattr(_auth, "revoke_alle_sitzungen", None) or getattr(_auth, "revoke_all", None)
+        if callable(_revoke):
+            await asyncio.to_thread(_revoke)
+    except Exception:  # noqa: BLE001 - Zusatzsicherung, kein Pflichtschritt
+        pass
     return JSONResponse({"ok": True})
 
 
@@ -187,6 +229,12 @@ async def backup_status(request: Request) -> JSONResponse:
 
 
 GIT_URL_RE = re.compile(r"^(https://[\w.\-]+/[\w.\-/]+?(\.git)?|git@[\w.\-]+:[\w.\-/]+?(\.git)?)$")
+# Ziel-Unterordner im Backup-Repo: relativer Safe-Pfad ohne Ausbruch (BE-09).
+# backup.py hängt den Wert an `repo / subdir` und _prune löscht dort hub-*.khub —
+# „..“-Segmente oder absolute Pfade würden die Sicherung außerhalb des Repos
+# schreiben und dort fremde Dateien löschen. Darum: nur \w/-Segmente (max. 4
+# Ebenen), kein führender Slash, „..“-Segmente werden zusätzlich explizit abgelehnt.
+BACKUP_SUBDIR_RE = re.compile(r"[\w\-]+(/[\w.\-]+){0,3}")
 BACKUP_TOKEN_SECRET = "backup_git_token"
 
 
@@ -218,7 +266,9 @@ async def backup_target(request: Request) -> JSONResponse:
             {"error": T("Ungültige Repo-Adresse. Beispiel: https://github.com/name/repo.git")},
             status_code=400,
         )
-    if not re.fullmatch(r"[\w.\-/]{1,60}", subdir) or not re.fullmatch(r"[\w.\-/]{1,60}", branch):
+    if not BACKUP_SUBDIR_RE.fullmatch(subdir) or ".." in subdir.split("/"):
+        return JSONResponse({"error": T("Ungültiger Ordner- oder Branch-Name.")}, status_code=400)
+    if not re.fullmatch(r"[\w.\-/]{1,60}", branch):
         return JSONResponse({"error": T("Ungültiger Ordner- oder Branch-Name.")}, status_code=400)
     if url.startswith("https://") and not token and not secret_name:
         return JSONResponse(
@@ -271,7 +321,11 @@ async def backup_now(request: Request) -> JSONResponse:
         return JSONResponse({"error": T("Sicherung läuft bereits")}, status_code=409)
     _backup_run.update(status="running", log=T("Sicherung läuft…"))
     vault.audit("BACKUP-RUN", "manuell", client="web-ui")
-    threading.Thread(target=_backup_worker, args=(config.load(), pp), daemon=True).start()
+    # Sprach-Kontext (contextvar) in den Worker-Thread vererben: Ein roher
+    # threading.Thread startet mit dem Default „de" — T() im Status-Log wäre dann
+    # immer deutsch, egal welche Sprache der anstoßende Request hatte (BE-05).
+    ctx = contextvars.copy_context()
+    threading.Thread(target=ctx.run, args=(_backup_worker, config.load(), pp), daemon=True).start()
     return JSONResponse({"ok": True})
 
 
@@ -371,27 +425,54 @@ def _probe_public(public: str) -> tuple[str, str]:
         return "err", T("{url} nicht erreichbar ({error})", url=public, error=type(e).__name__)
 
 
-async def health(request: Request) -> JSONResponse:
-    import shutil as _shutil
+def _chk(cid: str, name: str, status: str, detail: str, fix: str = "") -> dict:
+    """Diagnose-Check mit stabiler, sprachunabhängiger ``id``.
 
-    cfg = config.load()
-    checks: list[dict] = []
+    Das Frontend darf Logik nie an übersetzte Anzeigenamen hängen (FE-03: Der
+    „Sperren aufheben"-Knopf suchte c.name === 'Angriffsschutz' und blieb im
+    EN-Modus unsichtbar) — Vertrag mit FIX-I: u. a. id="angriffsschutz".
+    """
+    c = _check(name, status, detail, fix)
+    c["id"] = cid
+    return c
 
-    # --- Dienste ---
-    # Seit dem Blue-Green-Umzug (Run 28) läuft der Hub über kmcp-entry.socket -> Slots;
-    # die alte Einzel-Unit knowledge-mcp ist BEWUSST inaktiv (Notfallpfad). Der Check
-    # prüfte weiter nur die alte Unit — eine falsche Dauerwarnung mit gefährlichem
-    # Fix-Hinweis (Restart der Alt-Unit kollidiert mit dem Entry-Port).
-    _, entry = _sysctl("is-active", "kmcp-entry.socket")
+
+def _sysctl_guarded(*args: str) -> tuple[int, str]:
+    """``_sysctl``, das im Container nicht abstürzt (BE-09/OPS-08).
+
+    Fehlt systemctl (das Docker-Image enthält keins) oder läuft der Aufruf in
+    ein Timeout, wird ``unavailable`` geliefert statt zu werfen — die Checks
+    melden dann „unbekannt", statt die komplette Diagnose mit 500 zu kippen
+    (Muster: setup_wizard.py prüft shutil.which("systemctl")).
+    """
+    try:
+        return _sysctl(*args)
+    except (OSError, subprocess.SubprocessError):
+        return 1, "unavailable"
+
+
+def _dienst_checks() -> list[dict]:
+    """Server-/Timer-Status via systemctl (blockierend — im Thread aufrufen).
+
+    Seit dem Blue-Green-Umzug (Run 28) läuft der Hub über kmcp-entry.socket -> Slots;
+    die alte Einzel-Unit knowledge-mcp ist BEWUSST inaktiv (Notfallpfad). Der Check
+    prüfte weiter nur die alte Unit — eine falsche Dauerwarnung mit gefährlichem
+    Fix-Hinweis (Restart der Alt-Unit kollidiert mit dem Entry-Port).
+    """
+    out: list[dict] = []
+    _, entry = _sysctl_guarded("is-active", "kmcp-entry.socket")
     if entry == "active":
-        slots = [s for s in ("blue", "green") if _sysctl("is-active", f"kmcp-{s}")[1] == "active"]
+        slots = [s for s in ("blue", "green") if _sysctl_guarded("is-active", f"kmcp-{s}")[1] == "active"]
         if len(slots) == 1:
-            checks.append(
-                _check(T("Server"), "ok", T("läuft (Blue-Green, aktiver Slot: {slot})", slot=slots[0]))
+            out.append(
+                _chk(
+                    "server", T("Server"), "ok", T("läuft (Blue-Green, aktiver Slot: {slot})", slot=slots[0])
+                )
             )
         elif not slots:
-            checks.append(
-                _check(
+            out.append(
+                _chk(
+                    "server",
                     T("Server"),
                     "err",
                     T("Entry-Socket aktiv, aber kein Slot läuft"),
@@ -399,8 +480,9 @@ async def health(request: Request) -> JSONResponse:
                 )
             )
         else:
-            checks.append(
-                _check(
+            out.append(
+                _chk(
+                    "server",
                     T("Server"),
                     "warn",
                     T("beide Slots laufen gleichzeitig — nur der aktive sollte laufen"),
@@ -408,31 +490,95 @@ async def health(request: Request) -> JSONResponse:
                 )
             )
     else:
-        _, srv = _sysctl("is-active", "knowledge-mcp")
-        checks.append(
-            _check(
-                T("Server"),
-                "ok" if srv == "active" else "warn",
-                T("läuft") if srv == "active" else T("systemd meldet: {status}", status=srv),
-                "" if srv == "active" else "systemctl --user restart knowledge-mcp",
+        _, srv = _sysctl_guarded("is-active", "knowledge-mcp")
+        if srv == "unavailable":
+            out.append(
+                _chk(
+                    "server",
+                    T("Server"),
+                    "warn",
+                    T("Dienst-Status unbekannt — kein systemd in dieser Umgebung."),
+                )
+            )
+        else:
+            out.append(
+                _chk(
+                    "server",
+                    T("Server"),
+                    "ok" if srv == "active" else "warn",
+                    T("läuft") if srv == "active" else T("systemd meldet: {status}", status=srv),
+                    "" if srv == "active" else "systemctl --user restart knowledge-mcp",
+                )
+            )
+    _, timer = _sysctl_guarded("is-enabled", "nightly-map.timer")
+    if timer == "unavailable":
+        out.append(
+            _chk(
+                "nightly", T("Nacht-Mapping"), "warn",
+                T("Dienst-Status unbekannt — kein systemd in dieser Umgebung."),
             )
         )
-    _, timer = _sysctl("is-enabled", "nightly-map.timer")
-    _, nxt = _sysctl("show", "nightly-map.timer", "--property=NextElapseUSecRealtime", "--value")
-    checks.append(
-        _check(
-            T("Nacht-Mapping"),
-            "ok" if timer == "enabled" else "warn",
-            T("aktiv · nächster Lauf: {t}", t=nxt) if timer == "enabled" else T("ausgeschaltet"),
-            "" if timer == "enabled" else T("Im Mapping-Tab einschalten."),
+    else:
+        _, nxt = _sysctl_guarded("show", "nightly-map.timer", "--property=NextElapseUSecRealtime", "--value")
+        out.append(
+            _chk(
+                "nightly",
+                T("Nacht-Mapping"),
+                "ok" if timer == "enabled" else "warn",
+                T("aktiv · nächster Lauf: {t}", t=nxt) if timer == "enabled" else T("ausgeschaltet"),
+                "" if timer == "enabled" else T("Im Mapping-Tab einschalten."),
+            )
         )
-    )
+    return out
+
+
+def _log_befunde() -> tuple[list[str], list[str], list[str]]:
+    """Fehler des letzten Nacht-Laufs + Audit-Auswertung (blockierend — im Thread).
+
+    Alle Lesungen mit ``errors="replace"``: Eine einzige Nicht-UTF-8-Bytefolge im
+    Log darf die komplette Diagnose nicht mit 500 kippen (BE-09).
+    """
+    errs: list[str] = []
+    logs = sorted(NIGHTLY_LOG_DIR.glob("nightly-*.log"))
+    if logs:
+        last_run = logs[-1].read_text(errors="replace").split("=== nightly-map start")[-1]
+        date = logs[-1].stem.removeprefix("nightly-")
+        for line in last_run.splitlines():
+            if "FEHLGESCHLAGEN" in line or "fehlgeschlagen" in line:
+                errs.append(f"{date}: {line.strip()[:110]}")
+    audit_lines = AUDIT_PATH.read_text(errors="replace").splitlines()[-300:] if AUDIT_PATH.exists() else []
+    fails = [z for z in audit_lines if "LOGIN-FAIL" in z or "LOGIN-BLOCKED" in z]
+    alerts = [z for z in audit_lines if "SECURITY-ALERT" in z]
+    return errs, fails, alerts
+
+
+async def health(request: Request) -> JSONResponse:
+    import shutil as _shutil
+
+    cfg = config.load()
+    checks: list[dict] = []
+
+    # --- Dienste ---
+    # Die systemctl-Abfragen laufen blockierend (bis zu 4× 15 s) — sie gehören
+    # nicht in die Event-Loop: 60 s Stillstand für ALLE Anfragen inkl. Login (BE-09).
+    # Darum Thread + Gesamt-Deckel; schlägt der Deckel zu, gibt es „unbekannt"
+    # statt einer hängenden Diagnose.
+    try:
+        checks += await asyncio.wait_for(asyncio.to_thread(_dienst_checks), timeout=25)
+    except TimeoutError:
+        checks.append(
+            _chk(
+                "server", T("Server"), "warn",
+                T("Dienst-Status unbekannt — systemd antwortet nicht rechtzeitig."),
+            )
+        )
 
     # --- graphify ---
     gpath = Path(GRAPHIFY_BIN)
     have_graphify = gpath.is_file() or bool(_shutil.which("graphify"))
     checks.append(
-        _check(
+        _chk(
+            "graphify",
             "graphify",
             "ok" if have_graphify else "err",
             str(gpath) if have_graphify else T("nicht gefunden"),
@@ -444,13 +590,13 @@ async def health(request: Request) -> JSONResponse:
     bname, backend = config.active_backend(cfg)
     model = cfg["mapping"].get("model", "")
     secret = backend.get("secret")
-    # Interne Secrets (z. B. __2fa__) NICHT mitzählen — jede User-Oberfläche (UI-Liste,
-    # UI-Get/Delete, MCP) blendet HIDDEN_SECRETS aus; die Diagnose-/Übersichts-Zahl muss
-    # dieselbe „Wahrheit" zeigen, sonst steht dort 15 während die Liste 14 anzeigt (R13-1).
+    # secret_list liefert versteckte Secrets (z. B. __2fa__) mit; für Zähl-/Übersichts-
+    # anzeige ausblenden, sonst zeigt der Vault-Check bei aktivem 2FA eins zu viel.
     stored = set(vault.secret_list(client="web-ui")) - vault.HIDDEN_SECRETS
     has_key = bool(backend.get("local")) or (secret in stored if secret else False)
     checks.append(
-        _check(
+        _chk(
+            "backend",
             T("KI-Anbieter"),
             "ok" if has_key else "warn",
             f"{backend.get('label', bname)} · {model}"
@@ -463,12 +609,16 @@ async def health(request: Request) -> JSONResponse:
     vpath = Path(os.environ.get("VAULT_PATH", str(Path.home() / "knowledge-mcp" / "vault.enc")))
     vsize = _human(vpath.stat().st_size) if vpath.exists() else T("leer")
     checks.append(
-        _check(T("Secrets-Vault"), "ok", T("{n} Secrets · verschlüsselt ({size})", n=len(stored), size=vsize))
+        _chk(
+            "vault", T("Secrets-Vault"), "ok",
+            T("{n} Secrets · verschlüsselt ({size})", n=len(stored), size=vsize),
+        )
     )
     b = _backup_state(cfg)
     if not b["passphrase"]:
         checks.append(
-            _check(
+            _chk(
+                "backup",
                 T("Sicherung"),
                 "err",
                 T("keine Backup-Passphrase gesetzt — es wird NICHT gesichert"),
@@ -480,7 +630,8 @@ async def health(request: Request) -> JSONResponse:
         )
     elif not b["last"]:
         checks.append(
-            _check(
+            _chk(
+                "backup",
                 T("Sicherung"),
                 "warn",
                 T("eingerichtet, aber noch nie ausgeführt"),
@@ -492,7 +643,8 @@ async def health(request: Request) -> JSONResponse:
         offsite = any(t["type"] == "git" for t in b["targets"])
         st = "ok" if age_h < 36 else "warn"
         checks.append(
-            _check(
+            _chk(
+                "backup",
                 T("Sicherung"),
                 st,
                 T("letzte: {name} · vor {h} Std.", name=b["last"]["name"], h=int(age_h))
@@ -512,7 +664,8 @@ async def health(request: Request) -> JSONResponse:
     else:
         reach, reach_detail = "warn", T("nur lokal erreichbar ({url})", url=public)
     checks.append(
-        _check(
+        _chk(
+            "reach",
             T("Von außen erreichbar"),
             reach,
             reach_detail,
@@ -537,7 +690,10 @@ async def health(request: Request) -> JSONResponse:
     else:
         pstatus, pdetail = "ok", T("{n} Projekte, alle gemappt", n=len(entries))
     checks.append(
-        _check(T("Projekte"), pstatus, pdetail, T("Im Mapping-Tab prüfen.") if pstatus != "ok" else "")
+        _chk(
+            "projekte", T("Projekte"), pstatus, pdetail,
+            T("Im Mapping-Tab prüfen.") if pstatus != "ok" else "",
+        )
     )
 
     # --- Graph-Bestand (Post-Run-40, Bug 2): kein Graph ohne Registrierung ---
@@ -545,7 +701,8 @@ async def health(request: Request) -> JSONResponse:
 
     inventar = {"unregistered": [], "archived": []}
     try:
-        inventar = _mapping.graph_inventory()
+        # Liest Build-Manifeste über den ganzen Wissensbaum — blockierend, also im Thread.
+        inventar = await asyncio.to_thread(_mapping.graph_inventory)
     except Exception:  # noqa: BLE001 - Bestandsprüfung darf die Diagnose nicht kippen
         pass
     waisen = [g["name"] for g in inventar["unregistered"]]
@@ -568,7 +725,8 @@ async def health(request: Request) -> JSONResponse:
     du = _shutil.disk_usage(str(Path.home()))
     free_pct = du.free / du.total * 100
     checks.append(
-        _check(
+        _chk(
+            "disk",
             T("Speicherplatz"),
             "ok" if free_pct > 10 else "warn",
             T(
@@ -583,22 +741,14 @@ async def health(request: Request) -> JSONResponse:
 
     # --- Fehler NUR aus dem letzten Lauf ---
     # (früher: aus allen Läufen — dadurch standen längst behobene Fehler ewig da)
-    errs: list[str] = []
-    logs = sorted(NIGHTLY_LOG_DIR.glob("nightly-*.log"))
-    if logs:
-        last_run = logs[-1].read_text().split("=== nightly-map start")[-1]
-        date = logs[-1].stem.removeprefix("nightly-")
-        for line in last_run.splitlines():
-            if "FEHLGESCHLAGEN" in line or "fehlgeschlagen" in line:
-                errs.append(f"{date}: {line.strip()[:110]}")
-    audit_lines = AUDIT_PATH.read_text().splitlines()[-300:] if AUDIT_PATH.exists() else []
-    fails = [z for z in audit_lines if "LOGIN-FAIL" in z or "LOGIN-BLOCKED" in z]
-    alerts = [z for z in audit_lines if "SECURITY-ALERT" in z]
+    # Volltext-Lesungen (Nacht-Log, Audit-Ende) gehören nicht in die Event-Loop (BE-09).
+    errs, fails, alerts = await asyncio.to_thread(_log_befunde)
     blocked = ratelimit.blocked_ips()
     if blocked:
         ips = ", ".join(b["ip"] for b in blocked[:3])
         checks.append(
-            _check(
+            _chk(
+                "angriffsschutz",
                 T("Angriffsschutz"),
                 "err",
                 T("{n} IP(s) gerade gesperrt: {ips}", n=len(blocked), ips=ips),
@@ -607,7 +757,8 @@ async def health(request: Request) -> JSONResponse:
         )
     elif alerts:
         checks.append(
-            _check(
+            _chk(
+                "angriffsschutz",
                 T("Angriffsschutz"),
                 "warn",
                 T("{n} Sperre(n) in letzter Zeit — aktuell keine aktiv", n=len(alerts)),
@@ -616,7 +767,8 @@ async def health(request: Request) -> JSONResponse:
         )
     else:
         checks.append(
-            _check(
+            _chk(
+                "angriffsschutz",
                 T("Angriffsschutz"),
                 "ok",
                 T("keine aktiven Sperren")
@@ -628,7 +780,7 @@ async def health(request: Request) -> JSONResponse:
     # etwas enthält. Darum steht der Befund hier — sonst verstaubt es unbemerkt.
     # Quittierte Referenzen (Ursache behoben + bestätigt) zählen nicht mehr als aktuelle
     # Warnung; der Log-Eintrag selbst und die Quittierung bleiben im Audit nachvollziehbar.
-    offene = _recent_errors()
+    offene = await asyncio.to_thread(_recent_errors)
     fehler_log = DATA_DIR / "errors.log"
     if not fehler_log.exists() or fehler_log.stat().st_size == 0:
         c = _check(T("Unerwartete Fehler"), "ok", T("keine protokolliert"))
@@ -654,7 +806,8 @@ async def health(request: Request) -> JSONResponse:
         c["id"] = "errors"
         checks.append(c)
 
-    graphs_size = _dir_size(KNOWLEDGE_ROOT)
+    # rglob über den gesamten Wissensbaum — blockierend, also im Thread (BE-09).
+    graphs_size = await asyncio.to_thread(_dir_size, KNOWLEDGE_ROOT)
     return JSONResponse(
         {
             "checks": checks,

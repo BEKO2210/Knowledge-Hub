@@ -13,14 +13,23 @@ HUB="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="${KMCP_ENV_FILE:-$HOME/.config/knowledge-mcp/env}"
 # set -a: alles aus der env-Datei wird exportiert, damit es auch die Kindprozesse
 # (backup.py) erreicht — ohne das sieht nur die Shell selbst die Werte.
+# shellcheck source=/dev/null
 if [ -f "$ENV_FILE" ]; then set -a; source "$ENV_FILE"; set +a; fi
 PY="$HUB/.venv/bin/python"; [ -x "$PY" ] || PY="$(command -v python3)"
 GRAPHIFY="$(command -v graphify || echo "$HOME/.local/bin/graphify")"
 GRAPHIFY_SYNC="$(command -v graphify-sync || echo "$HOME/.local/bin/graphify-sync")"
 PORT="$("$PY" "$HUB/config.py" get server.port 2>/dev/null || echo 8300)"
 
-LOG="${KMCP_DATA_DIR:-$HUB}/build-logs/nightly-$(date +%F).log"
-mkdir -p "$(dirname "$LOG")"
+# Wissens-Repo: Umgebungsvariable schlägt Config (paths.knowledge_root),
+# Config schlägt eingebauten Default — kein hartkodierter Heimatpfad mehr.
+KNOWLEDGE_ROOT="${KNOWLEDGE_ROOT:-$("$PY" "$HUB/config.py" get paths.knowledge_root 2>/dev/null || echo "$HOME/graphify-knowledge")}"
+KNOWLEDGE_ROOT="${KNOWLEDGE_ROOT/#\~/$HOME}"   # führendes ~ auflösen
+# Export, damit Kindprozesse (graphify-sync, Semantik-Heredoc) die Werte sehen.
+export HUB KNOWLEDGE_ROOT
+
+LOGDIR="${KMCP_DATA_DIR:-$HUB}/build-logs"
+LOG="$LOGDIR/nightly-$(date +%F).log"
+mkdir -p "$LOGDIR"
 exec >>"$LOG" 2>&1
 
 # Backend-Konfiguration laden (BACKEND, MODEL, SECRET, ENVVAR, API_TIMEOUT, LOCAL)
@@ -33,7 +42,7 @@ runlog() { [ -n "$RUN_ID" ] && "$PY" "$HUB/runlog.py" "$@" 2>/dev/null || true; 
 
 EXTRA_ARGS=()
 if [ -n "$SECRET" ]; then
-  KEY="$(curl -s -H "Authorization: Bearer $MCP_TOKEN" \
+  KEY="$(curl -sf -m 10 -H "Authorization: Bearer ${MCP_TOKEN:-}" \
     "http://127.0.0.1:$PORT/ui/api/secrets/$SECRET" \
     | python3 -c 'import sys,json;print(json.load(sys.stdin).get("value",""))' 2>/dev/null)"
   if [ -z "$KEY" ]; then
@@ -147,18 +156,28 @@ for p in "${PROJECTS[@]}"; do
   fi
   exec 8>&-   # Projekt-Sperre freigeben (continue-Pfade heilen sich beim nächsten exec 8> selbst)
 done
+exec 8>&-     # Sperre des letzten Projekts vor Index-Bau/Sicherung freigeben
 
 # Semantische Indizes für den neuen Stand neu bauen (lokal, kostenlos).
 # graph_query prüft mtime und heilt sich zwar selbst, aber so zahlt kein
 # Nutzer-Request die Index-Baukosten.
 echo "--- Semantik-Index ($(date -Is))"
 "$PY" - <<'PYEOF' || echo "Semantik-Index fehlgeschlagen (graph_query baut ihn bei Bedarf selbst)"
+import os
 import sys
-sys.path.insert(0, "/home/belkis/knowledge-mcp")
+
+# HUB und KNOWLEDGE_ROOT kommen exportiert aus dem Shell-Skript — unter systemd
+# ist cwd=$HOME, hartkodierte Entwicklerpfade funktionieren dort nicht.
+sys.path.insert(0, os.environ["HUB"])
 from pathlib import Path
+
 import config
 import semantic
-root = Path.home() / "graphify-knowledge"
+
+root = Path(os.environ.get("KNOWLEDGE_ROOT", "~/graphify-knowledge")).expanduser()
+if not root.is_dir():
+    print(f"Wissens-Repo {root} existiert (noch) nicht — Index-Bau übersprungen")
+    raise SystemExit(0)
 sources = {}
 for e in config.project_entries():
     p = Path(e["path"]).expanduser()
@@ -179,6 +198,12 @@ if [ -n "${BACKUP_PASSPHRASE:-}" ]; then
 else
   echo "--- Sicherung übersprungen: keine BACKUP_PASSPHRASE gesetzt"
 fi
+
+# Log-Rotation: Nacht-Logs und maschinenlesbare Lauf-Protokolle wachsen sonst
+# unbegrenzt (1 Log/Tag, 1 run-*.json/Lauf) — 60 Tage Aufbewahrung reichen für
+# die Historie im Diagnose-Tab.
+find "$LOGDIR" -maxdepth 1 -name 'nightly-*.log' -mtime +60 -delete 2>/dev/null || true
+find "$LOGDIR/runs" -maxdepth 1 -name 'run-*.json' -mtime +60 -delete 2>/dev/null || true
 
 runlog finish "$RUN_ID"
 echo "=== nightly-map done $(date -Is) ==="

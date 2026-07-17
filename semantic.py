@@ -12,9 +12,13 @@ Das Modell wird einmal pro Prozess geladen (~2 s) und bleibt danach warm (~50 ms
 
 from __future__ import annotations
 
+import fnmatch
 import json
 import os
+import pickle
+import tempfile
 import threading
+from contextlib import contextmanager
 from pathlib import Path
 
 import numpy as np
@@ -65,7 +69,6 @@ TEXT_SUFFIXES = {
     ".sh",
     ".css",
     ".html",
-    ".env",
     ".conf",
     ".ini",
     ".sql",
@@ -76,9 +79,31 @@ TEXT_SUFFIXES = {
 SPECIAL_NAMES = {"Dockerfile", "docker-compose.yml", "docker-compose.yaml", "Caddyfile", "Makefile"}
 CHUNK, OVERLAP, MAX_FILE, MAX_CHUNKS = 800, 120, 200_000, 4000
 
+# Zugangsdaten gehören nie in den Chunk-Index — sie kämen sonst wörtlich in
+# FUNDSTELLEN-Antworten und ins LLM-Kontextfenster (CE-01/CE-02, P0-3).
+# Gleiche Muster-Liste wie in extraction.py; Beispiel-/Vorlagen-Dateien sind erlaubt.
+SECRET_GLOBS = (".env*", "*.key", "*.pem", "id_rsa*", "*secrets*", "*credentials*")
+SECRET_EXAMPLES = (".example", ".sample", ".template", ".dist")
+# Wartezeit auf eine fremde, laufende Index-Erstellung, bevor LockedError durchschlägt
+# (die Aufrufer-Kette fällt dann wie gehabt auf die graphify-CLI zurück).
+_INDEX_LOCK_TIMEOUT = 30
+
+
+def _is_secret_file(name: str) -> bool:
+    """True für Zugangsdaten-Dateien (.env, Schlüssel, *secrets*, *credentials* …).
+
+    Beispiel-/Vorlagen-Dateien (.env.example, credentials.sample.yaml …) sind erlaubt.
+    """
+    low = name.lower()
+    if low.endswith(SECRET_EXAMPLES):
+        return False
+    return any(fnmatch.fnmatch(low, pat) for pat in SECRET_GLOBS)
+
+
 _model = None
 _model_lock = threading.Lock()
 _chunk_builds: set[str] = set()  # Projekte, deren Chunk-Index gerade im Hintergrund entsteht
+_chunk_builds_lock = threading.Lock()  # macht Check-then-Add auf _chunk_builds atomar
 
 
 def _get_model():
@@ -118,41 +143,150 @@ def _node_text(n: dict, labels: dict | None = None) -> str:
     return " — ".join(p for p in parts if p)
 
 
-def build_index(project_dir: Path) -> int:
-    """Embedding-Index neben graph.json ablegen. Rückgabe: Anzahl Knoten."""
-    graph_json = project_dir / "graphify-out" / "graph.json"
-    g = json.loads(graph_json.read_text())
-    nodes = g.get("nodes", [])
-    if not nodes:
-        return 0
-    labels = _load_labels(project_dir)
-    vecs = np.array(list(_get_model().embed([_node_text(n, labels) for n in nodes])), dtype=np.float32)
-    vecs /= np.linalg.norm(vecs, axis=1, keepdims=True) + 1e-9
-    ids = np.array([n.get("id") or n.get("label") for n in nodes], dtype=object)
-    np.savez_compressed(project_dir / "graphify-out" / INDEX_NAME, vecs=vecs, ids=ids)
-    # Generation festhalten: der Index gehört zu genau diesem Graph-Stand (Build-Vertrag).
-    import buildmeta
+def _save_npz_atomic(ziel: Path, **arrays) -> None:
+    """npz über Temp-Datei + os.replace schreiben (Muster wie buildmeta.write_manifest).
 
-    buildmeta.write_index_meta(project_dir)
-    return len(nodes)
+    Leser sehen entweder den alten oder den neuen kompletten Stand — nie eine halbe
+    Datei (BadZipFile/EOFError bei parallelen oder abgebrochenen Builds, CE-02).
+    """
+    ziel.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=ziel.parent, suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            np.savez_compressed(f, **arrays)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, ziel)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+@contextmanager
+def _build_lock(project: str, verzeichnis: Path):
+    """Genau ein Index-Build je Projekt — prozess- UND threadübergreifend.
+
+    Nutzt die Haus-Sperre aus locks.py (flock im KMCP_LOCK_DIR, stirbt mit dem Prozess,
+    dieselbe Ordnung wie Graph-Build, Purge und Nachtlauf); ohne locks.py ein flock auf
+    eine Lock-Datei neben dem Ziel. Bei Timeout schlägt locks.LockedError durch — die
+    Aufrufer-Kette fällt dann wie gehabt auf die graphify-CLI zurück.
+    """
+    try:
+        import locks
+    except ImportError:  # locks.py fehlt (Minimal-Installation) — einfacher Fallback
+        locks = None
+    if locks is not None:
+        with locks.project_lock(project, timeout=_INDEX_LOCK_TIMEOUT):
+            yield
+        return
+    import fcntl
+
+    verzeichnis.mkdir(parents=True, exist_ok=True)
+    fd = os.open(verzeichnis / f"semantic-index-{project}.lock", os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
+
+
+class _LegacyIndexError(Exception):
+    """Index im Altformat (Pickle-Objekt-Arrays) — einmalig neu bauen statt crashen."""
+
+
+def _read_index(index_file: Path) -> tuple[np.ndarray, np.ndarray]:
+    """npz OHNE Pickle laden (graphify-out kommt per graphify-sync aus Quellrepos —
+    eine präparierte npz mit Pickle-Payload wäre sonst Code-Ausführung auf dem Hub).
+
+    Korrupte Dateien werfen weiterhin UnpicklingError (Aufrufer fallen auf die
+    graphify-CLI zurück); das Altformat mit Objekt-Arrays meldet _LegacyIndexError,
+    damit der Aufrufer den Index einmalig neu baut statt dauerhaft zu scheitern.
+    """
+    try:
+        with np.load(index_file, allow_pickle=False) as data:
+            vecs = np.asarray(data["vecs"], dtype=np.float32)
+            ids = np.asarray(data["ids"], dtype=str)
+    except ValueError as e:
+        if "Object arrays" in str(e):
+            raise _LegacyIndexError(str(e)) from e
+        raise pickle.UnpicklingError(f"{index_file.name} unlesbar: {e}") from e
+    except Exception as e:  # BadZipFile, EOFError, OSError, KeyError — alles „unlesbar"
+        raise pickle.UnpicklingError(f"{index_file.name} unlesbar: {e}") from e
+    return vecs, ids
+
+
+def build_index(project_dir: Path, force: bool = False) -> int:
+    """Embedding-Index neben graph.json ablegen. Rückgabe: Anzahl Knoten.
+
+    Leerer oder fehlender Graph: 0 ohne Datei — query() behandelt das als leeres
+    Ergebnis statt mit FileNotFoundError zu crashen. force=True baut auch bei frischem
+    mtime neu (Altformat oder Modellwechsel mit anderer Embedding-Dimension).
+    """
+    graph_json = project_dir / "graphify-out" / "graph.json"
+    if not graph_json.exists():
+        return 0  # noch kein Graph gebaut — nichts zu indizieren, kein Fehler
+    index_file = graph_json.parent / INDEX_NAME
+    with _build_lock(project_dir.name, graph_json.parent):
+        g = json.loads(graph_json.read_text())
+        nodes = g.get("nodes", [])
+        if not nodes:
+            return 0
+        if not force and index_file.exists() and index_file.stat().st_mtime >= graph_json.stat().st_mtime:
+            return len(nodes)  # ein paralleler Build war schneller — Index ist schon frisch
+        labels = _load_labels(project_dir)
+        vecs = np.array(list(_get_model().embed([_node_text(n, labels) for n in nodes])), dtype=np.float32)
+        vecs /= np.linalg.norm(vecs, axis=1, keepdims=True) + 1e-9
+        # ids als Unicode-Array (dtype=str): lädt ohne Pickle (allow_pickle=False).
+        ids = np.array([str(n.get("id") or n.get("label")) for n in nodes], dtype=str)
+        _save_npz_atomic(index_file, vecs=vecs, ids=ids)
+        # Generation festhalten: der Index gehört zu genau diesem Graph-Stand (Build-Vertrag).
+        import buildmeta
+
+        buildmeta.write_index_meta(project_dir)
+        return len(nodes)
 
 
 def query(project_dir: Path, question: str, budget: int = 1200, seeds: int = 6) -> str:
     """Traversal-Kontext im graphify-query-Format (Traversal-Kopf + NODE-Zeilen)."""
     graph_json = project_dir / "graphify-out" / "graph.json"
-    index_file = project_dir / "graphify-out" / INDEX_NAME
-    if not index_file.exists() or index_file.stat().st_mtime < graph_json.stat().st_mtime:
-        build_index(project_dir)  # fehlt oder veraltet — selbstheilend
+    index_file = graph_json.parent / INDEX_NAME
+    g: dict = {}
+    if graph_json.exists():  # fehlende graph.json = leerer Graph — kein FileNotFoundError
+        g = json.loads(graph_json.read_text())
+    nodes = g.get("nodes", []) or []
 
-    data = np.load(index_file, allow_pickle=True)
-    vecs, ids = data["vecs"], data["ids"]
-    q = np.array(list(_get_model().embed([question])), dtype=np.float32)[0]
-    q /= np.linalg.norm(q) + 1e-9
-    top = np.argsort(-(vecs @ q))[:seeds]
-    seed_ids = [str(ids[i]) for i in top]
+    seed_ids: list[str] = []
+    if nodes:  # leerer/fehlender Graph → leeres Traversal-Ergebnis statt Crash
+        if not index_file.exists() or index_file.stat().st_mtime < graph_json.stat().st_mtime:
+            build_index(project_dir)  # fehlt oder veraltet — selbstheilend
+        if index_file.exists():  # kann bei paralleler Löschung/Purge immer noch fehlen
+            q = np.array(list(_get_model().embed([question])), dtype=np.float32)[0]
+            q /= np.linalg.norm(q) + 1e-9
+            try:
+                vecs, ids = _read_index(index_file)
+                dim_passt = vecs.ndim == 2 and vecs.shape[1] == q.shape[0]
+            except _LegacyIndexError:
+                dim_passt = False  # Altformat (Objekt-Arrays) — einmalig neu bauen
+            if not dim_passt:
+                # Modellwechsel/Altbestand: Embedding-Dimensionen passen nicht zusammen.
+                # Nie „ValueError: matmul" durchreichen — Index automatisch neu bauen.
+                build_index(project_dir, force=True)
+                vecs, ids = _read_index(index_file)
+                if vecs.ndim != 2 or vecs.shape[1] != q.shape[0]:
+                    raise ValueError(
+                        f"Semantik-Index {vecs.shape} passt nicht zum Modell ({q.shape[0]}d) — "
+                        f"{index_file} löschen und build_index erneut rufen"
+                    )
+            top = np.argsort(-(vecs @ q))[:seeds]
+            seed_ids = [str(ids[i]) for i in top]
 
-    g = json.loads(graph_json.read_text())
-    by_id = {n.get("id") or n.get("label"): n for n in g.get("nodes", [])}
+    by_id = {n.get("id") or n.get("label"): n for n in nodes}
     adj: dict[str, set[str]] = {}
     for e in g.get("edges", g.get("links", [])):
         s, t = e.get("source"), e.get("target")
@@ -202,17 +336,27 @@ def query(project_dir: Path, question: str, budget: int = 1200, seeds: int = 6) 
 def _iter_source_files(root: Path):
     import os
 
+    wurzel = root.resolve()
     for p in sorted(root.rglob("*")):
-        if any(part in SKIP_DIRS for part in p.parts):
+        # SKIP_DIRS nur gegen die Teile UNTERHALB der Wurzel prüfen: ein Elternordner
+        # namens data/build/logs darf nicht den ganzen Quellbaum wegmatchen (CE-01/CE-02).
+        if any(part in SKIP_DIRS for part in p.relative_to(root).parts):
             continue
-        if p.is_file() and (
-            p.suffix.lower() in TEXT_SUFFIXES or p.name in SPECIAL_NAMES or p.name.startswith(".env")
-        ):
-            try:
-                if 0 < p.stat().st_size <= MAX_FILE and os.access(p, os.R_OK):
-                    yield p
-            except OSError:
+        if not (p.suffix.lower() in TEXT_SUFFIXES or p.name in SPECIAL_NAMES):
+            continue
+        if _is_secret_file(p.name):
+            continue  # keine Zugangsdaten in Index, FUNDSTELLEN oder LLM-Kontext
+        if p.is_symlink():
+            continue  # Symlinks grundsätzlich nicht folgen
+        try:
+            # rglob folgt Verzeichnis-Symlinks — der aufgelöste Pfad muss unterhalb der
+            # Wurzel bleiben, sonst landen fremde Dateien (/etc, ~/.ssh) im Index.
+            if not p.resolve().is_relative_to(wurzel):
                 continue
+            if p.is_file() and 0 < p.stat().st_size <= MAX_FILE and os.access(p, os.R_OK):
+                yield p
+        except OSError:
+            continue
 
 
 def build_chunk_index(project: str, source_dir: Path) -> int:
@@ -234,16 +378,18 @@ def build_chunk_index(project: str, source_dir: Path) -> int:
         return 0
     vecs = np.array(list(_get_model().embed(chunks)), dtype=np.float32)
     vecs /= np.linalg.norm(vecs, axis=1, keepdims=True) + 1e-9
-    CHUNK_DIR.mkdir(exist_ok=True)
-    np.savez_compressed(CHUNK_DIR / f"{project}.npz", vecs=vecs, chunks=np.array(chunks, dtype=object))
+    with _build_lock(project, CHUNK_DIR):
+        # chunks als Unicode-Array (dtype=str): lädt ohne Pickle (allow_pickle=False).
+        _save_npz_atomic(CHUNK_DIR / f"{project}.npz", vecs=vecs, chunks=np.array(chunks, dtype=str))
     return len(chunks)
 
 
 def _chunk_index_background(project: str, source_dir: Path) -> None:
     """Fehlenden Chunk-Index nachziehen, ohne die laufende Anfrage zu blockieren."""
-    if project in _chunk_builds:
-        return
-    _chunk_builds.add(project)
+    with _chunk_builds_lock:  # Check-then-Add atomar — sonst startet derselbe Build doppelt
+        if project in _chunk_builds:
+            return
+        _chunk_builds.add(project)
 
     def _run():
         try:
@@ -251,7 +397,8 @@ def _chunk_index_background(project: str, source_dir: Path) -> None:
         except Exception:  # noqa: BLE001 - Hintergrundaufbau darf nie stören
             pass
         finally:
-            _chunk_builds.discard(project)
+            with _chunk_builds_lock:
+                _chunk_builds.discard(project)
 
     threading.Thread(target=_run, daemon=True).start()
 
@@ -260,8 +407,24 @@ def _top_chunks(project: str, q_vec: np.ndarray, char_limit: int) -> list[str]:
     f = CHUNK_DIR / f"{project}.npz"
     if not f.exists():
         return []
-    data = np.load(f, allow_pickle=True)
-    vecs, chunks = data["vecs"], data["chunks"]
+    try:
+        with np.load(f, allow_pickle=False) as data:
+            vecs = np.asarray(data["vecs"], dtype=np.float32)
+            chunks = np.asarray(data["chunks"], dtype=str)
+    except Exception:  # korrupt oder Altformat (Pickle) — wegwerfen statt crashen
+        try:
+            f.unlink()  # hybrid_query legt ihn daraufhin im Hintergrund neu an
+        except OSError:
+            pass
+        return []
+    if vecs.ndim != 2 or vecs.shape[0] != len(chunks) or vecs.shape[1] != q_vec.shape[0]:
+        # Modellwechsel (andere Embedding-Dimension) oder inkonsistenter Bestand —
+        # nie „ValueError: matmul": Datei wegwerfen, der Hintergrund-Build heilt nach.
+        try:
+            f.unlink()
+        except OSError:
+            pass
+        return []
     out, used = [], 0
     for i in np.argsort(-(vecs @ q_vec)):
         c = str(chunks[i])

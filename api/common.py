@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hmac
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -44,11 +45,18 @@ DATA_DIR = Path(os.environ.get("KMCP_DATA_DIR", str(Path(__file__).resolve().par
 
 
 def _projects() -> list[str]:
-    return sorted(
-        d.name
-        for d in KNOWLEDGE_ROOT.iterdir()
-        if d.is_dir() and (d / "graphify-out" / "graph.json").exists()
-    )
+    # Auf einer frischen Instanz existiert die Root noch nicht — anlegen statt
+    # mit FileNotFoundError (500) zu enden: ein Hub ohne Projekte liefert dann
+    # sauber die leere Liste (BE-04).
+    try:
+        KNOWLEDGE_ROOT.mkdir(parents=True, exist_ok=True)
+        return sorted(
+            d.name
+            for d in KNOWLEDGE_ROOT.iterdir()
+            if d.is_dir() and (d / "graphify-out" / "graph.json").exists()
+        )
+    except OSError:  # z. B. keine Schreibrechte auf die Root — dann lieber leer als 500
+        return []
 
 
 def _check_password(password: str) -> bool:
@@ -63,11 +71,54 @@ def _check_password(password: str) -> bool:
     if st.get("has_password"):
         return vault.unlock(password)  # entsperrt zugleich den Vault
     legacy = os.environ.get("OAUTH_PASSWORD", "")
-    return bool(legacy) and hmac.compare_digest(password, legacy)
+    if not legacy:
+        return False
+    try:
+        # Byteweise vergleichen: compare_digest wirft auf str mit Nicht-ASCII
+        # (Umlaute im Passwort) einen TypeError → 500 statt 401, und der
+        # Fehlversuch würde nie ans Rate-Limit gemeldet (BE-04).
+        return hmac.compare_digest(password.encode("utf-8"), legacy.encode("utf-8"))
+    except UnicodeError:  # verwaiste Surrogate aus manipuliertem JSON-Body → sauberes 401
+        return False
+
+
+def _trusted_proxies() -> list[ipaddress.IPv4Network | ipaddress.IPv6Network]:
+    """Vertraute Proxies aus Env TRUSTED_PROXIES (kommagetrennt, CIDR oder Einzel-IP).
+
+    Leer (Default) = NIEMAND wird vertraut — fail-closed: Ungültige Einträge
+    werden übersprungen statt zu crashen.
+    """
+    netze = []
+    for eintrag in os.environ.get("TRUSTED_PROXIES", "").split(","):
+        eintrag = eintrag.strip()
+        if not eintrag:
+            continue
+        try:
+            netze.append(ipaddress.ip_network(eintrag, strict=False))
+        except ValueError:
+            continue
+    return netze
 
 
 def _client_ip(request: Request) -> str:
-    return request.headers.get("cf-connecting-ip") or (request.client.host if request.client else "?")
+    """Client-IP bestimmen — cf-connecting-ip NUR von vertrauten Proxies (P0-6).
+
+    Der Header ist vom Aufrufer frei setzbar: Wer ihn ungeprüft übernimmt, macht
+    die Rate-Limits (Login, TOTP, Register, Schreiben) per Header-Rotation
+    wirkungslos und erlaubt gefälschte IPs im Audit-Log. Er gilt deshalb nur,
+    wenn der DIREKTE Peer in TRUSTED_PROXIES steht (Default: leer = nie). Betrieb
+    hinter Cloudflare: die echten CF-Ranges dort eintragen.
+    """
+    peer = request.client.host if request.client else ""
+    header = request.headers.get("cf-connecting-ip", "").strip()
+    if header and peer:
+        try:
+            peer_ip = ipaddress.ip_address(peer)
+        except ValueError:
+            peer_ip = None
+        if peer_ip is not None and any(peer_ip in netz for netz in _trusted_proxies()):
+            return header
+    return peer or "?"
 
 
 def _bearer(request: Request) -> str:

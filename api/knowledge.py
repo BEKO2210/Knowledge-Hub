@@ -28,6 +28,12 @@ from api.i18n import T
 _parsed_cache: dict[str, tuple[float, dict | None]] = {}
 _payload_cache: dict[tuple[str, int], tuple[float, bytes]] = {}
 _CACHE_MAX = 12
+# Harter Deckel für ?limit= in der Graph-Ansicht (SEC-06): ohne Obergrenze serialisierte
+# ein einziger GET den VOLLEN Graphen (bei 100 k Knoten zig MB pro Request), und weil
+# der Payload-Cache pro (name, limit) schlüsselt, umgingen variierte Werte (0,-1,-2,…)
+# ihn komplett. limit<=0 (= „alle", schickt die UI bei Regler-Anschlag) wird auf
+# GRAPH_LIMIT_MAX normalisiert — alle „alle"-Varianten teilen sich so einen Cache-Key.
+GRAPH_LIMIT_MAX = 20_000
 
 
 def _graph_mtime(name: str) -> float | None:
@@ -50,14 +56,35 @@ def _read_graph(name: str) -> dict | None:
     if hit and hit[0] == mtime:
         return hit[1]
     try:
-        g = json.loads((KNOWLEDGE_ROOT / name / "graphify-out" / "graph.json").read_text())
-    except (OSError, json.JSONDecodeError):
+        g = json.loads((KNOWLEDGE_ROOT / name / "graphify-out" / "graph.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        # UnicodeDecodeError: Nicht-UTF-8-Bytes — der Graph gilt als „nicht lesbar",
+        # statt mit einem 500-Traceback projects()/graph() abzureißen (BE-06).
         g = None
     g = g if isinstance(g, dict) else None
     if len(_parsed_cache) >= _CACHE_MAX:
         _parsed_cache.clear()
     _parsed_cache[name] = (mtime, g)
     return g
+
+
+def _graph_listen(g: dict) -> tuple[list, list] | None:
+    """nodes/links eines geparsten Graphen typsicher holen (BE-06): Ist einer der
+    beiden Blöcke kein Array, ist der Graph strukturell kaputt → None; die Aufrufer
+    melden dann „Graph nicht lesbar" statt mit KeyError/TypeError in einen 500 zu
+    laufen. Einzelne Einträge ohne dict-Form oder ohne Pflichtschlüssel (id bzw.
+    source/target) werden herausgefiltert — der Rest des Graphen bleibt nutzbar."""
+    nodes = g.get("nodes", [])
+    links = g.get("links", g.get("edges", []))
+    if not isinstance(nodes, list) or not isinstance(links, list):
+        return None
+    nodes = [n for n in nodes if isinstance(n, dict) and n.get("id") is not None]
+    links = [
+        link
+        for link in links
+        if isinstance(link, dict) and link.get("source") is not None and link.get("target") is not None
+    ]
+    return nodes, links
 
 
 def _build_graph_payload(name: str, limit: int) -> bytes | None:
@@ -69,14 +96,16 @@ def _build_graph_payload(name: str, limit: int) -> bytes | None:
     g = _read_graph(name)
     if g is None:
         return None
-    nodes = g.get("nodes", [])
-    links = g.get("links", g.get("edges", []))
+    teile = _graph_listen(g)
+    if teile is None:
+        return None
+    nodes, links = teile
     degree: dict[str, int] = {}
     for link in links:
         degree[link["source"]] = degree.get(link["source"], 0) + 1
         degree[link["target"]] = degree.get(link["target"], 0) + 1
     ranked = sorted(nodes, key=lambda n: degree.get(n["id"], 0), reverse=True)
-    keep_nodes = ranked if limit <= 0 else ranked[:limit]  # limit<=0 = alle Knoten, kein Deckel
+    keep_nodes = ranked[:limit]  # limit wird in graph() auf 1..GRAPH_LIMIT_MAX geclamppt
     keep_ids = {n["id"] for n in keep_nodes}
     out_nodes = [
         {
@@ -85,7 +114,7 @@ def _build_graph_payload(name: str, limit: int) -> bytes | None:
             "community": n.get("community"),
             "community_name": n.get("community_name"),
             "file": n.get("source_file"),
-            "rationale": (n.get("rationale") or "")[:4000],
+            "rationale": str(n.get("rationale") or "")[:4000],
             "source_url": n.get("source_url") if n.get("source_url") not in (None, "None") else "",
             "degree": degree.get(n["id"], 0),
         }
@@ -105,17 +134,18 @@ def _build_projects() -> list[dict]:
     out = []
     for name in _projects():
         g = _read_graph(name)  # mtime-gecacht
-        if g is None:
+        teile = _graph_listen(g) if g is not None else None
+        if teile is None:
             out.append(
                 {"project": name, "nodes": 0, "edges": 0, "communities": 0, "error": T("Graph nicht lesbar")}
             )
             continue
-        nodes = g.get("nodes", [])
+        nodes, links = teile
         out.append(
             {
                 "project": name,
                 "nodes": len(nodes),
-                "edges": len(g.get("links", g.get("edges", []))),
+                "edges": len(links),
                 "communities": len({n.get("community") for n in nodes if n.get("community") is not None}),
             }
         )
@@ -139,6 +169,10 @@ async def graph(request: Request) -> JSONResponse:
         limit = int(request.query_params.get("limit", 2000))
     except (TypeError, ValueError):
         limit = 2000
+    # Clampen auf 1..GRAPH_LIMIT_MAX (SEC-06): limit<=0 heißt „alle" und wird auf das
+    # harte Maximum normalisiert — sonst gäbe es keinen Deckel und jede Negative
+    # (0,-1,-2,…) einen eigenen Cache-Schlüssel (= Cache-Umgehung per Parameter-Drehen).
+    limit = GRAPH_LIMIT_MAX if limit <= 0 else min(limit, GRAPH_LIMIT_MAX)
 
     # Fertige Antwort je nach graph.json-mtime aus dem Cache — so zahlt nur der erste
     # Aufruf nach einem Rebuild die Parse-/Rank-Kosten, nicht jeder Leser (R24-1).
@@ -274,24 +308,50 @@ async def explain(request: Request) -> JSONResponse:
     if name not in _projects() or not node:
         return JSONResponse({"error": T("Unbekanntes Projekt oder fehlender Knoten")}, status_code=400)
 
-    # 1. Fakten aus dem Graphen (lokal, schnell, kostenlos)
-    proc = subprocess.run(  # noqa: S603 - fester Binary, geprüftes Projekt, Listenargumente
-        [GRAPHIFY_BIN, "explain", node],
-        cwd=KNOWLEDGE_ROOT / name,
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
-    if proc.returncode != 0:
-        return JSONResponse({"error": proc.stderr.strip()[:2000] or "graphify failed"}, status_code=500)
-    context = graph_context.anreichern(KNOWLEDGE_ROOT / name, proc.stdout.strip())
-
-    # 2. Von der KI in verständliche Sprache bringen
+    # 1. Anbieter/Key bestimmen (lokal, billig) — erst danach entscheidet sich,
+    #    ob der teure graphify-Lauf überhaupt nötig ist.
     cfg = config.load()
     backend_name, backend = config.active_backend(cfg)
     model = cfg["mapping"].get("model", "")
     secret = backend.get("secret")
     key = vault.secret_get(secret, client="web-ui") if secret else ""
+
+    # 2. Schon einmal erklärt? Der Speicher-Check muss VOR dem Subprocess stehen
+    #    (SEC-06): ein Treffer darf die Event-Loop nicht mit einem bis zu 120 s
+    #    langen graphify-Lauf blockieren. Läuft unter denselben Bedingungen wie
+    #    zuvor — ohne nutzbaren Key bleibt es bei den Rohdaten (s. Schritt 4).
+    if not (secret and not key) and not request.query_params.get("fresh"):
+        alt = _antwort_lesen(name, "explain", node, model)
+        if alt:
+            # Ohne frischen Graph-Kontext (der käme erst aus dem Subprocess) —
+            # die UI zeigt den Rohdaten-Kasten dann einfach leer an.
+            return JSONResponse({**alt, "source": "gespeichert", "context": ""})
+
+    # 3. Fakten aus dem Graphen (lokal, kostenlos) — im Thread: synchron aufgerufen
+    #    blockierte der Subprocess die gesamte Event-Loop bis zum 120-s-Timeout (BE-06).
+    try:
+        proc = await asyncio.to_thread(
+            subprocess.run,  # noqa: S603 - fester Binary, geprüftes Projekt, Listenargumente
+            [GRAPHIFY_BIN, "explain", node],
+            cwd=KNOWLEDGE_ROOT / name,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except subprocess.TimeoutExpired:
+        return JSONResponse(
+            {"error": T("Zeitüberschreitung beim Lesen des Graphen — bitte erneut versuchen.")},
+            status_code=504,
+        )
+    except OSError:
+        # graphify fehlt (FileNotFoundError) oder das Projekt wurde seit der Prüfung
+        # oben entfernt (Race mit dem Remove-Endpunkt) — saubere Antwort statt 500-Traceback.
+        return JSONResponse({"error": T("Graph nicht lesbar")}, status_code=500)
+    if proc.returncode != 0:
+        return JSONResponse({"error": proc.stderr.strip()[:2000] or "graphify failed"}, status_code=500)
+    context = graph_context.anreichern(KNOWLEDGE_ROOT / name, proc.stdout.strip())
+
+    # 4. Von der KI in verständliche Sprache bringen
     if secret and not key:
         return JSONResponse(
             {
@@ -304,11 +364,6 @@ async def explain(request: Request) -> JSONResponse:
                 ),
             }
         )
-    # Schon einmal erklärt? Dann nicht noch einmal bezahlen.
-    if not request.query_params.get("fresh"):
-        alt = _antwort_lesen(name, "explain", node, model)
-        if alt:
-            return JSONResponse({**alt, "source": "gespeichert", "context": context})
 
     try:
         answer = await asyncio.to_thread(

@@ -19,6 +19,7 @@ import re
 import secrets
 import shutil
 import subprocess
+import threading
 from pathlib import Path
 
 from starlette.requests import Request
@@ -81,9 +82,14 @@ def _activate(vault_key: str, mcp_token: str, password: str) -> None:
 
     os.environ["VAULT_KEY"] = vault_key  # vault liest den Key bei jedem Zugriff neu
     os.environ["MCP_TOKEN"] = mcp_token
-    os.environ["OAUTH_PASSWORD"] = password
-    _oauth.OAUTH_PASSWORD = password  # Modul-Konstanten nachziehen
+    _oauth.OAUTH_PASSWORD = password  # Modul-Konstanten nachziehen (reicht für den Altfall)
     _server.MCP_TOKEN = mcp_token
+    # Das Klartext-Passwort gehört NICHT in die Prozess-Umgebung (SEC-03): Über
+    # /proc/<pid>/environ wäre es bis zum Neustart für jeden Prozess desselben
+    # Benutzers lesbar — und frische v2-Vaults brauchen die Variable beim Login
+    # nicht (vault.unlock prüft die Passwort-Verpackung). Einen geerbten Rest
+    # (z. B. aus einer alten env-Datei) gleich mit entfernen.
+    os.environ.pop("OAUTH_PASSWORD", None)
 
 
 async def setup_status(request: Request) -> JSONResponse:
@@ -92,31 +98,51 @@ async def setup_status(request: Request) -> JSONResponse:
 
 _setup_attempts: list[float] = []
 
+# Prozessweite Sperre für den kritischen Abschnitt in setup_submit (SEC-08, TOCTOU):
+# Zwei nebenläufige Submits passierten sonst BEIDE die Guards (is_configured /
+# Vault-Notbremse), und das zweite vault.init() überschrieb den frischen Vault des
+# ersten — der angezeigte vault_key wäre danach wertlos. Check → env → init laufen
+# jetzt atomar unter diesem Lock, mit erneuter Prüfung INNERHALB der Sperre.
+# threading.Lock, kein asyncio.Lock: Im gesperrten Block gibt es kein await, und die
+# Sperre ist damit unabhängig von der jeweils laufenden Event-Loop.
+_setup_lock = threading.Lock()
 
-async def setup_submit(request: Request) -> JSONResponse:
-    if is_configured():
-        return JSONResponse({"error": "System ist bereits eingerichtet"}, status_code=409)
 
+def _fehler_vault_vorhanden() -> JSONResponse:
     # NOTBREMSE: Existiert bereits ein Vault, wird hier NIEMALS eingerichtet — auch wenn
     # is_configured() aus irgendeinem Grund False liefert (z. B. beschädigte env-Datei).
     # Sonst würde der Wizard einen leeren Vault über die vorhandenen Secrets schreiben.
+    return JSONResponse(
+        {
+            "error": "Es existiert bereits ein Vault mit Secrets. Die Einrichtung würde ihn "
+            "überschreiben und wurde deshalb abgebrochen. Wenn die env-Datei fehlt, "
+            "spiele sie aus deiner Sicherung zurück (backup.py restore) — "
+            "nicht neu einrichten!",
+        },
+        status_code=409,
+    )
+
+
+async def setup_submit(request: Request) -> JSONResponse:
+    # Schnelle Vorab-Ablehnung — die verbindliche Prüfung steht UNTER der Sperre unten.
+    if is_configured():
+        return JSONResponse({"error": "System ist bereits eingerichtet"}, status_code=409)
+
     import vault as _vault
 
     if _vault.VAULT_PATH.exists():
-        return JSONResponse(
-            {
-                "error": "Es existiert bereits ein Vault mit Secrets. Die Einrichtung würde ihn "
-                "überschreiben und wurde deshalb abgebrochen. Wenn die env-Datei fehlt, "
-                "spiele sie aus deiner Sicherung zurück (backup.py restore) — "
-                "nicht neu einrichten!",
-            },
-            status_code=409,
-        )
+        return _fehler_vault_vorhanden()
 
     # Bremse gegen automatisierte Einrichtungs-Versuche (gemeinsamer Zähler).
     import ratelimit
 
-    ip = request.headers.get("cf-connecting-ip") or (request.client.host if request.client else "?")
+    # Client-IP wie überall im Hub (FIX-F, api/common.py:_client_ip — bewusst nicht
+    # dupliziert, Import ist zyklusfrei): cf-connecting-ip gilt NUR, wenn der direkte
+    # Peer in TRUSTED_PROXIES steht — der Header ist frei fälschbar und würde sonst
+    # die Setup-Bremse per Header-Rotation aushebeln (P0-6).
+    from api.common import _client_ip
+
+    ip = _client_ip(request)
     if not ratelimit.check("setup", ip):
         return JSONResponse({"error": "Zu viele Versuche — bitte kurz warten."}, status_code=429)
     ratelimit.record_failure("setup", ip)  # jeder Setup-Aufruf zählt (seltenes Ereignis)
@@ -139,34 +165,41 @@ async def setup_submit(request: Request) -> JSONResponse:
             {"error": "Öffentliche URL muss mit http:// oder https:// beginnen."}, status_code=400
         )
 
-    vault_key = base64.b64encode(secrets.token_bytes(32)).decode()
-    mcp_token = secrets.token_urlsafe(32)
+    # Kritischer Abschnitt: komplett ohne await, damit die Sperre die Event-Loop nie
+    # blockiert und der zweite Submit sauber am erneuten Guard scheitert statt am
+    # FileExistsError aus vault.init (500).
+    with _setup_lock:
+        if is_configured():
+            return JSONResponse({"error": "System ist bereits eingerichtet"}, status_code=409)
+        if _vault.VAULT_PATH.exists():
+            return _fehler_vault_vorhanden()
 
-    # VAULT_KEY dient nur noch der Auto-Entsperrung (unbeaufsichtigter Betrieb).
-    # Das Passwort wird NICHT gespeichert — es verpackt den Hauptschlüssel im Vault.
-    _write_env({"VAULT_KEY": vault_key, "MCP_TOKEN": mcp_token})
-    _activate(vault_key, mcp_token, password)
+        vault_key = base64.b64encode(secrets.token_bytes(32)).decode()
+        mcp_token = secrets.token_urlsafe(32)
 
-    import vault as _vault
+        # VAULT_KEY dient nur noch der Auto-Entsperrung (unbeaufsichtigter Betrieb).
+        # Das Passwort wird NICHT gespeichert — es verpackt den Hauptschlüssel im Vault.
+        _write_env({"VAULT_KEY": vault_key, "MCP_TOKEN": mcp_token})
+        _activate(vault_key, mcp_token, password)
 
-    _vault.init(password)  # legt Vault v2 an: Passwort- + Env-Verpackung
+        _vault.init(password)  # legt Vault v2 an: Passwort- + Env-Verpackung
 
-    # config.yaml um Branding/URL ergänzen, Rest unangetastet lassen
-    cfg = {}
-    if config.CONFIG_PATH.exists():
+        # config.yaml um Branding/URL ergänzen, Rest unangetastet lassen
+        cfg = {}
+        if config.CONFIG_PATH.exists():
+            import yaml
+
+            cfg = yaml.safe_load(config.CONFIG_PATH.read_text()) or {}
+        cfg.setdefault("server", {})["public_url"] = public_url
+        cfg.setdefault("branding", {})["name"] = name
+        config.CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
         import yaml
 
-        cfg = yaml.safe_load(config.CONFIG_PATH.read_text()) or {}
-    cfg.setdefault("server", {})["public_url"] = public_url
-    cfg.setdefault("branding", {})["name"] = name
-    config.CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    import yaml
-
-    config.CONFIG_PATH.write_text(
-        "# Knowledge Hub — zentrale Konfiguration\n"
-        "# Secrets gehören NICHT hierher, sondern in ./env.\n\n"
-        + yaml.safe_dump(cfg, allow_unicode=True, sort_keys=False)
-    )
+        config.CONFIG_PATH.write_text(
+            "# Knowledge Hub — zentrale Konfiguration\n"
+            "# Secrets gehören NICHT hierher, sondern in ./env.\n\n"
+            + yaml.safe_dump(cfg, allow_unicode=True, sort_keys=False)
+        )
 
     return JSONResponse(
         {

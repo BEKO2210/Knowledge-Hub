@@ -109,14 +109,24 @@ def status() -> dict:
 # ---------------------------------------------------------------------------
 # Einrichtung
 # ---------------------------------------------------------------------------
-def begin_setup(account: str, issuer: str) -> dict:
+def begin_setup(account: str, issuer: str) -> dict | None:
     """Neues Geheimnis erzeugen (noch NICHT aktiv) und QR liefern.
 
     Das Geheimnis wird schon im Vault abgelegt (enabled=False), damit die
     Aktivierung ohne Zustands-Weitergabe über den Client auskommt.
+
+    Ist 2FA bereits AKTIV, wird der Bestand niemals überschrieben (P0-1): Eine
+    gekaperte Sitzung könnte sonst Secret + alle Recovery-Codes lautlos
+    vernichten und 2FA so ohne jeden Code abschalten — der Code-Zwang in
+    disable() läge damit ausgehebelt. Rückgabe ist dann None (Endpunkt: 409).
+    Prüfen+Schreiben laufen unter EINER Vault-Transaktion, damit kein
+    gleichzeitiges enable() dazwischenrutscht.
     """
-    secret = _b32secret()
-    _save({"enabled": False, "secret": secret, "recovery": []})
+    with vault.transaction():
+        if _load().get("enabled"):
+            return None
+        secret = _b32secret()
+        _save({"enabled": False, "secret": secret, "recovery": []})
     uri = provisioning_uri(secret, account, issuer)
     return {"secret": secret, "uri": uri, "qr": qr_svg(uri)}
 

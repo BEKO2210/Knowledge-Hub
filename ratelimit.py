@@ -43,6 +43,40 @@ _fails: dict[str, list[float]] = _load()
 _lock = threading.Lock()
 _alert: Callable[[str, str, int], None] | None = None
 
+# Speicher-Deckel (CE-08): Ohne Aufräumen wüchsen die IP-Maps mit jedem neu
+# gesehenen Client unbegrenzt (Memory-DoS, wachsende ratelimit.json) — besonders
+# fies, solange IPs gefälscht werden konnten (P0-6, TRUSTED_PROXIES in
+# api/common.py). Deshalb: periodisch fegen + harte Obergrenze je Map.
+_MAX_KEYS = 50_000  # harte Obergrenze an Schlüsseln je Map; älteste werden verworfen
+_JANITOR_INTERVALL = 300  # Sekunden — höchstens so oft fegen (Zugriffs-pfad-schonend)
+_last_janitor = 0.0
+
+
+def _janitor_locked(now: float) -> bool:
+    """Abgelaufene Einträge fegen und die Obergrenze durchsetzen.
+
+    NUR unter _lock aufrufen. Rückgabe: True, wenn _fails verändert wurde
+    (→ Aufrufer persistiert, damit auch die Datei klein bleibt).
+    """
+    global _last_janitor
+    if now - _last_janitor < _JANITOR_INTERVALL:
+        return False
+    _last_janitor = now
+    geaendert = False
+    for store in (_fails, _hits):
+        for key in [
+            k
+            for k, times in store.items()
+            if not times or now - max(times) >= _LIMITS.get(k.partition(":")[0], (900, 5))[0]
+        ]:
+            store.pop(key, None)
+            geaendert = geaendert or store is _fails
+        if len(store) > _MAX_KEYS:  # Obergrenze: älteste (nach letztem Zeitstempel) wegwerfen
+            for key in sorted(store, key=lambda k: max(store[k] or [0.0]))[: len(store) - _MAX_KEYS]:
+                store.pop(key, None)
+            geaendert = geaendert or store is _fails
+    return geaendert
+
 
 def _persist() -> None:
     """Nur nicht-leere Einträge speichern (hält die Datei klein)."""
@@ -70,8 +104,14 @@ def check(action: str, ip: str) -> bool:
     window, limit = _LIMITS.get(action, (900, 5))
     now = time.time()
     with _lock:
-        fails = [t for t in _fails.get(_key(action, ip), []) if now - t < window]
-        _fails[_key(action, ip)] = fails
+        if _janitor_locked(now):
+            _persist()
+        key = _key(action, ip)
+        fails = [t for t in _fails.get(key, []) if now - t < window]
+        if fails:
+            _fails[key] = fails
+        else:
+            _fails.pop(key, None)  # leere Listen gar nicht erst speichern (Map-Größe)
         return len(fails) < limit
 
 
@@ -81,9 +121,11 @@ def record_failure(action: str, ip: str) -> int:
     window, limit = _LIMITS.get(action, (900, 5))
     now = time.time()
     with _lock:
-        fails = [t for t in _fails.get(_key(action, ip), []) if now - t < window]
+        _janitor_locked(now)  # _persist() folgt unten ohnehin
+        key = _key(action, ip)
+        fails = [t for t in _fails.get(key, []) if now - t < window]
         fails.append(now)
-        _fails[_key(action, ip)] = fails
+        _fails[key] = fails
         count = len(fails)
         just_blocked = count == limit
         _persist()
@@ -114,13 +156,16 @@ def throttle(action: str, ip: str) -> tuple[bool, bool]:
     window, limit = _LIMITS.get(action, (60, 120))
     now = time.time()
     with _lock:
-        hits = [t for t in _hits.get(_key(action, ip), []) if now - t < window]
+        if _janitor_locked(now):  # räumt auch _fails mit auf → Datei klein halten
+            _persist()
+        key = _key(action, ip)
+        hits = [t for t in _hits.get(key, []) if now - t < window]
         erlaubt = len(hits) < limit
         gerade_gesperrt = len(hits) == limit
         # Auch abgelehnte Versuche zählen (Fenster wandert mit), aber die Liste
         # deckeln — sonst wüchse sie mit jedem geblockten Versuch weiter.
         hits.append(now)
-        _hits[_key(action, ip)] = hits[-(limit + 1) :]
+        _hits[key] = hits[-(limit + 1) :]
     return erlaubt, gerade_gesperrt
 
 

@@ -19,7 +19,6 @@ from __future__ import annotations
 import copy
 import fcntl
 import os
-import re
 import sys
 import tempfile
 import time
@@ -86,6 +85,38 @@ def _deep_merge(base: dict, override: dict) -> dict:
     return out
 
 
+# Kernsektionen, die YAML-Objekte sein MÜSSEN (Typ-Validierung, CE-10/OPS-07):
+# „mapping: null" oder „server: text" kippte sonst erst später als roher TypeError/
+# AttributeError (z. B. schon beim Modul-Import von server.py) — hier gibt es dafür
+# eine klare ConfigError-Meldung, wie bei kaputtem YAML.
+_KERN_OBJEKTE = ("server", "branding", "paths", "mapping")
+
+
+def _validiere_typen(data: dict) -> None:
+    """Typ-Guards für config.yaml — klare ConfigError statt späterer TypeErrors."""
+    for schluessel in _KERN_OBJEKTE:
+        if schluessel in data and not isinstance(data[schluessel], dict):
+            raise ConfigError(
+                f"config.yaml: Abschnitt „{schluessel}“ muss ein YAML-Objekt sein, "
+                f"gefunden: {type(data[schluessel]).__name__}."
+            )
+    mapping = data.get("mapping")
+    if isinstance(mapping, dict):
+        projekte = mapping.get("projects")
+        if projekte is not None:
+            if not isinstance(projekte, list):
+                raise ConfigError(
+                    "config.yaml: mapping.projects muss eine Liste sein, "
+                    f"gefunden: {type(projekte).__name__}."
+                )
+            for eintrag in projekte:
+                if not isinstance(eintrag, (str, dict)):
+                    raise ConfigError(
+                        "config.yaml: mapping.projects-Einträge müssen Pfad-Texte oder "
+                        f"Objekte mit „path“ sein, gefunden: {type(eintrag).__name__}."
+                    )
+
+
 def load() -> dict:
     data = {}
     if CONFIG_PATH.exists():
@@ -95,6 +126,7 @@ def load() -> dict:
             raise ConfigError(f"config.yaml ist kein gültiges YAML: {str(e).splitlines()[0]}") from e
         if not isinstance(data, dict):
             raise ConfigError("config.yaml muss ein YAML-Objekt sein (kein Liste/Wert an oberster Stelle).")
+        _validiere_typen(data)
     return _deep_merge(DEFAULTS, data)
 
 
@@ -187,7 +219,18 @@ def _update_yaml(mutate: Callable[[dict], None], cfg_path: Path | None = None) -
     with _config_lock(target):
         data = {}
         if target.exists():
-            data = yaml.safe_load(target.read_text()) or {}
+            # Dieselben Guards wie in load(): kaputtes YAML oder falsche Top-Level-
+            # Typen müssen auch hier eine klare ConfigError ergeben — sonst crasht
+            # mutate() mit rohem YAMLError/AttributeError/TypeError (CE-10).
+            try:
+                data = yaml.safe_load(target.read_text()) or {}
+            except yaml.YAMLError as e:
+                raise ConfigError(f"config.yaml ist kein gültiges YAML: {str(e).splitlines()[0]}") from e
+            if not isinstance(data, dict):
+                raise ConfigError(
+                    "config.yaml muss ein YAML-Objekt sein (kein Liste/Wert an oberster Stelle)."
+                )
+            _validiere_typen(data)
         mutate(data)
         _schreibe_atomar(target, _HEADER + yaml.safe_dump(data, allow_unicode=True, sort_keys=False))
 
@@ -256,25 +299,6 @@ def save_archived_graphs(entries: list[dict]) -> None:
 
 def backends(cfg: dict | None = None) -> dict:
     return (cfg or load())["mapping"].get("backends", {})
-
-
-_PRICE_RE = re.compile(r"\$([0-9.]+)\s*/\s*\$([0-9.]+)")
-
-
-def model_price(model: str, cfg: dict | None = None) -> tuple[float, float]:
-    """(Input, Output)-Preis pro 1 Mio. Tokens in USD für ein Modell.
-
-    Einzige Quelle ist der `hint` in config.yaml (z. B. „empfohlen · $0.40/$1.60"),
-    damit der Preis dort bleibt, wo er ohnehin gepflegt wird — keine zweite Tabelle,
-    die auseinanderläuft. Unbekanntes oder kostenloses Modell (Ollama) → (0.0, 0.0).
-    """
-    cfg = cfg or load()
-    for b in backends(cfg).values():
-        for m in b.get("models", []):
-            if m.get("id") == model:
-                mt = _PRICE_RE.search(str(m.get("hint", "")))
-                return (float(mt.group(1)), float(mt.group(2))) if mt else (0.0, 0.0)
-    return 0.0, 0.0
 
 
 def active_backend(cfg: dict | None = None) -> tuple[str, dict]:

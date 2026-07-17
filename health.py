@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from pathlib import Path
 
 import config
@@ -100,6 +101,91 @@ def _check_graphen() -> tuple[bool, str]:
     return True, f"{geprueft} Graphen parsebar"
 
 
+# --- Gedrosselte Readiness-Probe (P0-7) --------------------------------------
+# /healthz/ready ist offen (kein Bearer) und wird von Loadbalancern gepollt: Dürfte
+# jede Probe ALLE graph.json vollständig parsen, fröre eine einfache curl-Schleife
+# die einzige Event-Loop ein (SEC-06). Deshalb prüft ready_pruefung() die Graphen
+# nur stichprobenartig (max_items), OHNE Voll-Parsing — Datei-Existenz, Größe und
+# ein kurzer Kopf-Sniff genügen für Readiness — und cached das Ergebnis kurz
+# (cache_seconds). Die vollständige Prüfung aller Graphen bleibt der Deep-Sicht
+# (_check_graphen).
+_GRAPH_CACHE: dict = {"schluessel": None, "zeit": 0.0, "ergebnis": None}
+
+
+def _graph_fingerabdruck(max_items: int) -> tuple:
+    """Billiger Änderungsdetektor über die Stichprobe — nur stat(), kein Parsen."""
+    namen = sorted(_projects())
+    spuren = []
+    for name in namen[: max(max_items, 0)]:
+        pfad = KNOWLEDGE_ROOT / name / "graphify-out" / "graph.json"
+        try:
+            st = pfad.stat()
+            spuren.append((name, st.st_mtime_ns, st.st_size))
+        except OSError:
+            spuren.append((name, None))
+    return (len(namen), tuple(spuren))
+
+
+def _check_graphen_stichprobe(max_items: int) -> tuple[bool, str]:
+    """Readiness-taugliche Graphen-Probe: gedeckelt UND ohne Voll-Parsing (P0-7).
+
+    Pro Graph (höchstens max_items) nur stat() + die ersten Bytes: Existenz,
+    Größe > 0 und ein JSON-Objekt-Beginn („{") genügen als Readiness-Signal —
+    json.loads über megabytegroße Graphen wäre der DoS-Hebel, den diese Probe
+    abschaffen soll (SEC-06). Der Sniff fängt trotzdem offensichtlich kaputte
+    Dateien ab; der gründliche Voll-Parse bleibt der Deep-Sicht (_check_graphen).
+    """
+    defekt, geprueft, vorhanden = [], 0, 0
+    for name in sorted(_projects()):
+        pfad = KNOWLEDGE_ROOT / name / "graphify-out" / "graph.json"
+        try:
+            st = pfad.stat()
+        except OSError:
+            continue  # kein Graph vorhanden = kein Befund (Projektliste zählt separat)
+        vorhanden += 1
+        if geprueft >= max(max_items, 0):
+            continue  # Stichprobe voll — der Rest wird nur noch gezählt, nicht gelesen
+        geprueft += 1
+        try:
+            if st.st_size == 0:
+                defekt.append(f"{name} (Datei leer)")
+                continue
+            with pfad.open("rb") as fh:
+                kopf = fh.read(512).decode("utf-8", errors="replace").lstrip("\ufeff \t\r\n")
+            if not kopf.startswith("{"):
+                defekt.append(f"{name} (kein JSON-Objekt)")
+        except OSError as e:
+            defekt.append(f"{name} ({type(e).__name__})")
+    if defekt:
+        return False, "nicht lesbar: " + ", ".join(defekt)
+    detail = f"{geprueft} Graphen vorhanden und plausibel"
+    uebersprungen = vorhanden - geprueft
+    if uebersprungen > 0:
+        detail += f" (+{uebersprungen} nur gezählt — Stichprobe, voller Check in /healthz/deep)"
+    return True, detail
+
+
+def _graphen_gecached(max_items: int, cache_seconds: int) -> tuple[bool, str]:
+    """Stichproben-Ergebnis mit TTL-Cache plus Fingerabdruck-Invalidierung.
+
+    Der Cache darf Änderungen nicht verstecken: Weicht der stat-Fingerabdruck
+    (Projektliste + mtime/Größe der Stichprobe) ab, wird sofort neu geprüft — die
+    TTL deckt nur den änderungs-blinden Rest ab (z. B. Inhalt bei gleichem mtime).
+    """
+    jetzt = time.monotonic()
+    schluessel = _graph_fingerabdruck(max_items)
+    cache = _GRAPH_CACHE
+    if (
+        cache["ergebnis"] is not None
+        and cache["schluessel"] == schluessel
+        and jetzt - cache["zeit"] < cache_seconds
+    ):
+        return cache["ergebnis"]
+    ergebnis = _check_graphen_stichprobe(max_items)
+    cache.update(schluessel=schluessel, zeit=jetzt, ergebnis=ergebnis)
+    return ergebnis
+
+
 def _check_mcp_tools(tool_names: set[str] | None) -> tuple[bool, str]:
     if tool_names is None:
         return False, "MCP-Toolliste nicht ermittelbar"
@@ -181,4 +267,35 @@ async def checks(mcp=None, deep: bool = False) -> list[dict]:
 
 async def ready(mcp=None, deep: bool = False) -> tuple[bool, list[dict]]:
     ergebnisse = await checks(mcp, deep=deep)
+    return all(c["ok"] for c in ergebnisse), ergebnisse
+
+
+async def ready_pruefung(max_items: int = 50, cache_seconds: int = 10) -> tuple[bool, list[dict]]:
+    """Gedrosselte Readiness für die offene Probe /healthz/ready (P0-7).
+
+    Rückgabe exakt wie ready(): (ok, checks). Damit die Probe billig bleibt, prüft
+    der Graphen-Check höchstens max_items graph.json (Stichprobe) und zwar OHNE
+    Voll-Parsing — nur stat() + kurzer Kopf-Sniff (_check_graphen_stichprobe) — und
+    wird für cache_seconds Sekunden gecacht (Invalidierung zusätzlich per
+    stat-Fingerabdruck). Ohne MCP-Handle kann die Toolliste hier nicht verifiziert
+    werden — sie bleibt Teil der Deep-Sicht. Das bisherige Verhalten (ready) bleibt
+    als Fallback bestehen.
+    """
+    pruefungen: list[tuple] = [
+        ("config", _check_config),
+        ("datenpfade", _check_datenpfade),
+        ("vault", _check_vault),
+        ("projektliste", _check_projektliste),
+        ("graphen", lambda: _graphen_gecached(max_items, cache_seconds)),
+        ("mcp_tools", lambda: (True, "ohne MCP-Handle nicht prüfbar — vollständig in /healthz/deep")),
+        ("assets", _check_assets),
+        ("migrationen", _check_migrationen),
+    ]
+    ergebnisse = []
+    for name, fn in pruefungen:
+        try:
+            ok, detail = fn()
+        except Exception as e:  # noqa: BLE001 - Absturz eines Checks = unready, kein 500
+            ok, detail = False, f"Check selbst fehlgeschlagen: {type(e).__name__}"
+        ergebnisse.append({"check": name, "ok": ok, "detail": detail})
     return all(c["ok"] for c in ergebnisse), ergebnisse

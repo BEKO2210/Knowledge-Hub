@@ -85,17 +85,44 @@ TEXT_SUFFIXES = {
     ".sh",
     ".css",
     ".html",
-    ".env",
     ".conf",
     ".ini",
     ".sql",
     ".prisma",
     ".example",
     ".sample",
+    ".template",
     ".service",
     ".timer",
 }
 SPECIAL_NAMES = {"Dockerfile", "docker-compose.yml", "docker-compose.yaml", "Caddyfile", "Makefile"}
+# Live-Secrets werden NIEMALS extrahiert — ihr Inhalt ginge an das externe LLM und
+# landete als Fakten in der synchronisierten graph.json (P0-3, hub-audit CE-01/OPS-09).
+# Das Muster-Set wirkt zusätzlich zur .graphifyignore (Defense-in-Depth);
+# Beispiel-/Template-Dateien (.env.example, credentials.sample …) bleiben erlaubt.
+SECRET_EXAMPLE_SUFFIXES = (".example", ".sample", ".template")
+SECRET_NAME_PATTERNS = (
+    ".env",
+    ".env.*",
+    "*.env",
+    "*.key",
+    "*.pem",
+    "id_rsa*",
+    "*secrets*",
+    "*credentials*",
+)
+
+
+def _ist_secret(name: str) -> bool:
+    """Echte Secret-Datei erkennen (case-insensitiv), Beispiele/Templates ausgenommen."""
+    from fnmatch import fnmatch
+
+    n = name.lower()
+    if n.endswith(SECRET_EXAMPLE_SUFFIXES):
+        return False
+    return any(fnmatch(n, pat) for pat in SECRET_NAME_PATTERNS)
+
+
 MAX_CHARS = 7000  # pro LLM-Aufruf
 MAX_FILE = 300_000
 
@@ -146,24 +173,29 @@ def iter_files(root: Path):
     from fnmatch import fnmatch
 
     muster = _ignore_patterns(root)
-    for p in sorted(root.rglob("*")):
-        if any(part in SKIP_DIRS for part in p.parts):
-            continue
-        if not p.is_file():
-            continue
-        if p.name in SKIP_STATE_FILES:
-            continue
-        if any(fnmatch(p.name, pat) for pat in SKIP_NAME_PATTERNS):
-            continue
-        rel = str(p.relative_to(root))
-        if muster and _ignoriert(rel, p.name, muster):
-            continue
-        if p.suffix.lower() in TEXT_SUFFIXES or p.name in SPECIAL_NAMES or p.name.startswith(".env"):
-            try:
-                if 0 < p.stat().st_size <= MAX_FILE and os.access(p, os.R_OK):
-                    yield p
-            except OSError:
+    # os.walk mit dirnames-Pruning: SKIP_DIRS wirkt nur auf Teile UNTERHALB der
+    # Projekt-Wurzel — vorher matchte der Check auch die absoluten Elternpfade und
+    # ein Projekt unter */data/* oder */build/* lieferte lautlos 0 Dateien, was den
+    # Cache wipete und eine leere graph.json publizierte (P0-4). Nebenbei wird der
+    # Baum nicht mehr komplett als Liste materialisiert (node_modules & Co. werden
+    # gar nicht erst durchwandert) und Symlink-Verzeichnisse nicht verfolgt.
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS and not _ist_secret(d))
+        for name in sorted(filenames):
+            if name in SKIP_STATE_FILES or _ist_secret(name):
                 continue
+            if any(fnmatch(name, pat) for pat in SKIP_NAME_PATTERNS):
+                continue
+            p = Path(dirpath) / name
+            rel = str(p.relative_to(root))
+            if muster and _ignoriert(rel, name, muster):
+                continue
+            if p.suffix.lower() in TEXT_SUFFIXES or name in SPECIAL_NAMES:
+                try:
+                    if 0 < p.stat().st_size <= MAX_FILE and os.access(p, os.R_OK):
+                        yield p
+                except OSError:
+                    continue
 
 
 def slug(label: str) -> str:
@@ -177,17 +209,19 @@ def _parse_json(raw: str) -> dict | None:
     return json.loads(re.sub(r",\s*([}\]])", r"\1", m.group(0)))  # tolerante Kommas
 
 
-def extract_file(
-    ask, backend: dict, model: str, key: str, rel: str, text: str, usage: dict | None = None
-) -> dict | None:
+def extract_file(ask, backend: dict, model: str, key: str, rel: str, text: str) -> dict | None:
     """Eine Datei durch das LLM — ein Retry, dann aufgeben (Datei wird übersprungen)."""
     user = f"Datei: {rel}\n\n{text[:MAX_CHARS]}"
     for attempt in (1, 2):
         try:
-            return _parse_json(ask(backend, model, key, SYSTEM_PROMPT, user, limit=3000, usage=usage))
+            data = _parse_json(ask(backend, model, key, SYSTEM_PROMPT, user, limit=3000))
         except Exception as e:  # noqa: BLE001 - eine kaputte Datei stoppt nicht den Lauf
             if attempt == 2:
                 print(f"  WARN {rel}: {e}", file=sys.stderr)
+            continue
+        # JSON-freie Antwort oder valides JSON falschen Typs → zählt als Fehlversuch
+        if isinstance(data, dict):
+            return data
     return None
 
 
@@ -196,8 +230,15 @@ def build_graph(cache: dict) -> dict:
     nodes: dict[str, dict] = {}
     links: list[dict] = []
     for rel, entry in sorted(cache.items()):
+        if not isinstance(entry, dict):  # valides JSON, falscher Typ → Eintrag überspringen
+            continue
         label_to_id: dict[str, str] = {}
-        for ent in entry.get("entities", []):
+        entities = entry.get("entities", [])
+        if not isinstance(entities, list):
+            entities = []
+        for ent in entities:
+            if not isinstance(ent, dict):
+                continue
             label = str(ent.get("label", "")).strip()
             if not label:
                 continue
@@ -236,7 +277,12 @@ def build_graph(cache: dict) -> dict:
             }
         label_to_id[rel] = fid
         linked: set[str] = set()
-        for r in entry.get("relations", []):
+        relations = entry.get("relations", [])
+        if not isinstance(relations, list):
+            relations = []
+        for r in relations:
+            if not isinstance(r, dict):
+                continue
             s = label_to_id.get(str(r.get("source", "")))
             t = label_to_id.get(str(r.get("target", "")))
             if s and t and s != t:
@@ -277,6 +323,12 @@ def build_graph(cache: dict) -> dict:
     }
 
 
+def _extraktion_ok(data: dict) -> bool:
+    """LLM-Ergebnis muss entities/relations als Listen liefern — valides JSON mit
+    falschem Typ (String/Dict) crashte sonst den ganzen Lauf mit AttributeError."""
+    return isinstance(data.get("entities", []), list) and isinstance(data.get("relations", []), list)
+
+
 def extract_project(
     root: Path, ask=None, backend: dict | None = None, model: str = "", key: str = ""
 ) -> dict:
@@ -285,23 +337,32 @@ def extract_project(
     out_dir.mkdir(exist_ok=True)
     cache_file = out_dir / CACHE_NAME
     try:
-        cache = json.loads(cache_file.read_text())
+        cache = json.loads(cache_file.read_text(encoding="utf-8"))
     except Exception:  # noqa: BLE001 - kaputter Cache = voller Neuaufbau
         cache = {}
+    if not isinstance(cache, dict):  # valides JSON falschen Typs (z. B. Liste)
+        print(f"  WARN: Cache {cache_file} hat falschen Typ — voller Neuaufbau", file=sys.stderr)
+        cache = {}
+    else:
+        # Einträge falschen Typs verwerfen, sonst AttributeError beim .get-Zugriff
+        cache = {rel: eintrag for rel, eintrag in cache.items() if isinstance(eintrag, dict)}
 
     seen, changed = set(), 0
-    usage = {"in": 0, "out": 0, "calls": 0}
     for f in iter_files(root):
         rel = str(f.relative_to(root))
         seen.add(rel)
         try:
-            text = f.read_text(errors="ignore")
+            text = f.read_text(encoding="utf-8", errors="ignore")
         except OSError:
             continue
-        h = hashlib.sha256(text.encode()).hexdigest()
+        h = hashlib.sha256(text.encode("utf-8")).hexdigest()
         if cache.get(rel, {}).get("hash") == h:
             continue  # unverändert → kein LLM-Aufruf
-        data = extract_file(ask, backend, model, key, rel, text, usage=usage)
+        data = extract_file(ask, backend, model, key, rel, text)
+        if data is not None and not _extraktion_ok(data):
+            # valides JSON mit unerwarteter Struktur — früher AttributeError im Nachtlauf
+            print(f"  WARN {rel}: LLM-Antwort mit falschem Typ verworfen", file=sys.stderr)
+            data = None
         if data is None:
             # Datei nicht extrahierbar: alter Stand bleibt, statt Wissen zu verlieren
             if rel in cache:
@@ -318,14 +379,15 @@ def extract_project(
         del cache[rel]
 
     graph = build_graph(cache)
-    (out_dir / "graph.json").write_text(json.dumps(graph, ensure_ascii=False, indent=1))
-    cache_file.write_text(json.dumps(cache, ensure_ascii=False))
+    (out_dir / "graph.json").write_text(
+        json.dumps(graph, ensure_ascii=False, indent=1), encoding="utf-8"
+    )
+    cache_file.write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
     return {
         "files": len(seen),
         "changed": changed,
         "nodes": len(graph["nodes"]),
         "edges": len(graph["links"]),
-        "usage": usage,
     }
 
 
@@ -358,17 +420,6 @@ def main() -> int:
         f"[hub-extract] {root.name}: {stats['files']} Dateien, {stats['changed']} neu extrahiert, "
         f"{stats['nodes']} Knoten, {stats['edges']} Kanten in {time.time() - t0:.0f}s"
     )
-    # Kosten dieses Laufs verbuchen: Tokens × Modellpreis (aus config.yaml). Ohne diese
-    # Zeilen zählte die Mapping-Kostenanzeige den eigenen Extraktor als $0 (er löste
-    # graphify als Standard ab, das die est.-cost-Zeilen früher lieferte). Format bewusst
-    # so, dass der Log-Parser in api/mapping.py (est. cost … / tokens: … in / … out) greift.
-    u = stats.get("usage") or {}
-    tin, tout = int(u.get("in", 0)), int(u.get("out", 0))
-    price_in, price_out = config.model_price(model, cfg)
-    cost = tin / 1_000_000 * price_in + tout / 1_000_000 * price_out
-    label = model.replace(":", "-")  # Doppelpunkt (z. B. ollama-Tags) bräche den Parser
-    print(f"[hub-extract] {root.name}: tokens: {tin:,} in / {tout:,} out")
-    print(f"[hub-extract] {root.name}: est. cost {label}: ${cost:.4f}")
     return 0
 
 

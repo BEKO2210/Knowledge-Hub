@@ -102,7 +102,11 @@ def build_details_json(graph_json: pathlib.Path) -> str:
                 rec[k] = str(v)[:4000]
         if rec:
             out[nid] = rec
-    return json.dumps(out, ensure_ascii=False)
+    # Die JSON landet roh in einem <script>-Block (graph.html, Standalone-Viewer OHNE
+    # CSP): "</" muss als "<\/" escapt werden, sonst schließt ein rationale/source_url
+    # mit "</script>" den Block und schleust eigenes Markup/Skript ein (stored XSS).
+    # "<\/" ist in JSON- wie in JS-Strings ein gültiges Escape für "</".
+    return json.dumps(out, ensure_ascii=False).replace("</", "<\\/")
 
 
 def polish(path: pathlib.Path) -> str:

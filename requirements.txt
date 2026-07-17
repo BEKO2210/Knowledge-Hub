@@ -8,3 +8,4 @@ PyYAML==6.0.3
 anthropic>=0.116.0
 segno>=1.6.0
 fastembed>=0.5
+jsonschema==4.26.0   # public_data.py: Schema-Validierung des Public-Data-Exports

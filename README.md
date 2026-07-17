@@ -10,7 +10,7 @@
 encrypted vault. Claude — or any MCP client — gets both, and nobody else gets anything.**
 
 [![CI](https://github.com/BEKO2210/Knowledge-Hub/actions/workflows/ci.yml/badge.svg)](https://github.com/BEKO2210/Knowledge-Hub/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-366%20passing-22c55e)](tests/)
+[![Tests](https://img.shields.io/badge/tests-360%2B%20passing-22c55e)](tests/)
 [![Python 3.12](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![MCP](https://img.shields.io/badge/MCP-OAuth_2.1%20%2B%20PKCE-8b5cf6)](https://modelcontextprotocol.io)
 [![Zero downtime](https://img.shields.io/badge/deploys-blue--green%2C%20zero%20downtime-1baf7a)](#architecture)
@@ -22,7 +22,7 @@ encrypted vault. Claude — or any MCP client — gets both, and nobody else get
 [Architecture](#architecture) ·
 [Wiki](https://github.com/BEKO2210/Knowledge-Hub/wiki)
 
-<img src="docs/images/graph-dark.png" alt="The graph view: a project's knowledge graph with clusters, a selected node and its neighbours" width="100%" />
+<img src="docs/images/graph-light.png" alt="The graph view: a project's knowledge graph with clusters, a selected node and its neighbours" width="100%" />
 
 </div>
 
@@ -53,20 +53,26 @@ cd Knowledge-Hub
 ./install.sh
 ```
 
-The installer creates a virtualenv, generates your keys, installs a systemd user service plus the
-nightly timer, and opens a **setup wizard** in your browser: choose a password, pick the projects
-to map, pick an AI provider for the semantic pass — done. On its first query the hybrid engine
+The installer creates a virtualenv, installs a systemd user service plus the nightly timer, and
+points you at the **setup wizard** in your browser: choose a password and a hub name — the wizard
+generates your keys and you're in. Which projects to map and which AI provider runs the
+extraction is decided afterwards in the Mapping tab. On its first query the hybrid engine
 downloads a local embedding model once (~470 MB); after that, retrieval is fully offline.
 
 <details>
 <summary><b>Docker instead</b></summary>
 
 ```bash
-cp config.example.yaml config.yaml   # point knowledge_root at your projects
-docker compose up -d
+docker compose up -d   # then open http://localhost:8300/ui for the setup wizard
 ```
 
-The compose file mounts your projects read-only and keeps the vault in a named volume.
+No local `config.yaml` is needed: on first start the entrypoint copies the default config to
+`/data/config.yaml` inside the named `hub-data` volume — edit it there. The same volume keeps the
+vault, the knowledge repo (`KNOWLEDGE_ROOT=/data/graphify-knowledge`) and your notes, so
+everything survives a container recreate. Put the projects you want mapped under `./projects`
+(compose mounts it at `/projects`, read-write — the build writes a `graphify-out/` folder into
+each project) and register them in the Mapping tab. The image ships no cron; trigger the nightly
+run from the host: `docker compose exec knowledge-hub /app/nightly-map.sh`.
 </details>
 
 <details>
@@ -110,8 +116,7 @@ turns on HSTS automatically once it sees `https://`.
 <td><img src="docs/images/health-dark.png" alt="Diagnostics" /><br /><sub><b>Diagnostics</b> — every check says what to do if it isn't green.</sub></td>
 </tr>
 <tr>
-<td><img src="docs/images/connect-dark.png" alt="Connecting an AI client" /><br /><sub><b>Connect</b> — pair a device by QR code, then test the connection for real.</sub></td>
-<td align="center"><img src="docs/images/mobile-graph.png" alt="The mobile interface" width="230" /><br /><sub><b>Phone</b> — installable, swipeable, yours.</sub></td>
+<td colspan="2" align="center"><img src="docs/images/mobile-graph.png" alt="The mobile interface" width="230" /><br /><sub><b>Phone</b> — installable, swipeable, yours.</sub></td>
 </tr>
 </table>
 
@@ -252,7 +257,7 @@ Questions and ideas go in [Discussions](https://github.com/BEKO2210/Knowledge-Hu
 pip install -r requirements-dev.txt
 playwright install chromium
 
-pytest          # 366 tests: unit, HTTP contract, MCP over real streamable HTTP,
+pytest          # 360+ tests: unit, HTTP contract, MCP over real streamable HTTP,
                 # retrieval engine, run history, graph registry — and end-to-end
                 # in a real browser
 ruff check .    # lint
@@ -272,7 +277,7 @@ buildmeta.py the build contract: manifest, validation gate, atomic publish & res
 vault.py     encryption
 oauth.py     OAuth 2.1 + PKCE
 bluegreen/   the zero-downtime switch used in production
-tests/       366 of them
+tests/       369+ of them
 ```
 
 The interface is English by default and German at the flick of a switch.

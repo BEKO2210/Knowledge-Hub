@@ -11,6 +11,7 @@ every AI client that knows the URL + token gets them immediately.
 from __future__ import annotations
 
 import hmac
+import inspect
 import json
 import os
 import shlex
@@ -210,10 +211,19 @@ def report_get(project: str) -> str:
     return (KNOWLEDGE_ROOT / project / "graphify-out" / "GRAPH_REPORT.md").read_text()
 
 
-GRAPHIFY_SYNC = os.environ.get("GRAPHIFY_SYNC", str(Path.home() / ".local" / "bin" / "graphify-sync"))
+# Wie GRAPHIFY_BIN oben: konfigurierbar über paths.graphify_sync in der config.yaml,
+# nicht hart kodiert — sonst verhielten sich MCP-Build und Nachtlauf je nach
+# Auslöser unterschiedlich (OPS-07).
+GRAPHIFY_SYNC = os.environ.get("GRAPHIFY_SYNC", str(config.path(CFG["paths"]["graphify_sync"])))
 BUILD_LOG_DIR = Path(os.environ.get("KMCP_DATA_DIR", str(Path(__file__).parent))) / "build-logs"
 _builds: dict[str, dict] = {}  # project name -> {status, started, finished, log}
 _builds_lock = threading.Lock()
+
+# Globale Obergrenze gleichzeitiger Builds: Jeder Build ist ein Thread plus bis zu vier
+# Subprozesse (je 30-min-Timeout) und kann LLM-Tokens verbrennen. Die Running-Sperre
+# gilt nur pro Projekt — ohne diese Decke startete ein authentifizierter Client N
+# Builds auf N Verzeichnisse (CPU-/Platten-/Kosten-Exhaustion, SEC-06).
+_MAX_PARALLELE_BUILDS = 2
 
 
 def _resolve_project_dir(project: str) -> Path:
@@ -403,9 +413,42 @@ def graph_build(project: str) -> str:
     with _builds_lock:
         if _builds.get(name, {}).get("status") == "running":
             return f"build for {name!r} is already running"
+        laufend = sum(1 for b in _builds.values() if b.get("status") == "running")
+        if laufend >= _MAX_PARALLELE_BUILDS:
+            return (
+                f"too many builds running ({laufend}/{_MAX_PARALLELE_BUILDS}) — "
+                "wait for one to finish, then retry"
+            )
         _builds[name] = {"status": "running", "started": int(time.time()), "finished": None}
-    threading.Thread(target=_build_worker, args=(name, path), daemon=True).start()
+    try:
+        threading.Thread(target=_build_worker, args=(name, path), daemon=True).start()
+    except RuntimeError as e:
+        # Scheitert schon der Thread-Start (z. B. „can't start new thread" bei
+        # Erschöpfung), darf der Status nicht ewig auf „running" einfrieren (BE-01).
+        with _builds_lock:
+            _builds[name].update(
+                status="failed", finished=int(time.time()), error=f"Build-Thread startete nicht: {e}"
+            )
+        return f"build for {name!r} could not start: {e}"
     return f"started mapping {name!r} ({path}) — poll graph_build_status({name!r})"
+
+
+# Nur das Ende des Build-Logs lesen: Lange Builds schreiben MB-große Logs, der
+# Status-Poll braucht davon nur den Schwanz — nicht die komplette Datei pro Poll (BE-02).
+_LOG_TAIL_BYTES = 64 * 1024
+
+
+def _log_tail(log_file: Path) -> str:
+    """Die letzten ~64 KB des Build-Logs. UTF-8 mit Ersetzung defekter Bytes — ein
+    Build-Crash mit Binärmüll im Log darf den Status nicht unabrufbar machen (BE-02)."""
+    try:
+        with log_file.open("rb") as f:
+            f.seek(0, os.SEEK_END)
+            f.seek(max(0, f.tell() - _LOG_TAIL_BYTES))
+            roh = f.read()
+    except OSError:
+        return ""
+    return roh.decode("utf-8", errors="replace")[-1500:]
 
 
 @mcp.tool
@@ -414,7 +457,7 @@ def graph_build_status(project: str = "") -> dict | list[dict]:
 
     def _entry(name: str, b: dict) -> dict:
         log_file = BUILD_LOG_DIR / f"{name}.log"
-        tail = log_file.read_text()[-1500:] if log_file.exists() else ""
+        tail = _log_tail(log_file) if log_file.exists() else ""
         return {"project": name, **b, "log_tail": tail}
 
     with _builds_lock:
@@ -593,6 +636,26 @@ def secret_delete(name: str) -> str:
 app = mcp.http_app()
 
 
+async def _readiness_pruefung() -> tuple[bool, list[dict]]:
+    """Readiness-Ergebnis — möglichst über die gecachte/gedeckelte Variante.
+
+    KOORDINATION (BUGTRACKER, Abhängigkeit 4): FIX-L baut in health.py eine
+    gecachte/gedeckelte ready_pruefung(max_items=50, cache_seconds=10), damit die
+    offene Probe nicht bei JEDEM Aufruf alle graph.json voll parst (P0-7). Solange
+    sie fehlt — oder ihre Signatur davon abweicht — fällt dieser Aufruf defensiv auf
+    health.ready zurück; die Drossel im Endpunkt unten bleibt in jedem Fall wirksam.
+    """
+    pruefung = getattr(health, "ready_pruefung", None)
+    if pruefung is None:
+        return await health.ready(mcp)
+    try:
+        params = inspect.signature(pruefung).parameters
+        ergebnis = pruefung(mcp) if "mcp" in params else pruefung()
+    except (TypeError, ValueError):
+        return await health.ready(mcp)
+    return await ergebnis if inspect.isawaitable(ergebnis) else ergebnis
+
+
 class BearerGate:
     """Reject requests that carry neither the static token nor a valid OAuth token.
 
@@ -637,9 +700,20 @@ class BearerGate:
             await ui.ui_app(scope, receive, send)
             return
         headers = dict(scope.get("headers") or [])
-        auth = headers.get(b"authorization", b"").decode()
+        # errors="replace": Der Header ist angreifer-kontrolliert — kaputte Bytes müssen
+        # ein sauberes 401 ergeben, niemals einen 500 an der Security-Grenze (BE-02).
+        auth = headers.get(b"authorization", b"").decode(errors="replace")
         token = auth.removeprefix("Bearer ").strip() if auth.startswith("Bearer ") else ""
-        static_ok = bool(MCP_TOKEN) and hmac.compare_digest(token, MCP_TOKEN)
+        # Byteweise vergleichen: compare_digest wirft auf str mit Nicht-ASCII-Zeichen
+        # (z. B. „töken" oder dem Ersatzzeichen aus errors="replace") einen TypeError —
+        # das wäre ein 500 an der Security-Grenze statt eines sauberen 401 (BE-02).
+        # Muster wie in oauth.py/api/common.py.
+        try:
+            static_ok = bool(MCP_TOKEN) and hmac.compare_digest(
+                token.encode("utf-8", errors="replace"), MCP_TOKEN.encode("utf-8")
+            )
+        except UnicodeError:
+            static_ok = False
         ua = headers.get(b"user-agent", b"").decode(errors="replace")
         authorized = static_ok or oauth.validate_access_token(token, ua)
         # Gesundheitsebenen für Blue-Green: live/ready sind offen, aber bewusst nur ein
@@ -650,16 +724,32 @@ class BearerGate:
             await JSONResponse({"status": "ok"})(scope, receive, send)
             return
         if path == "/healthz/ready":
-            ok, _checks = await health.ready(mcp)
+            # Offener Endpunkt am öffentlichen Hostnamen: drosseln, sonst friert eine
+            # einfache curl-Schleife über die Check-Suite die einzige Event-Loop ein
+            # (P0-7/SEC-06). IP = TCP-Peer, bewusst KEIN cf-connecting-ip — der Header
+            # ist frei rotierbar und würde die Drossel aushebeln (P0-6).
+            ip = (scope.get("client") or ("?", 0))[0]
+            erlaubt, gerade_gesperrt = ratelimit.throttle("health", ip)
+            if not erlaubt:
+                if gerade_gesperrt:
+                    vault.audit("HEALTH-THROTTLED", path, client=ip)
+                await JSONResponse(
+                    {"error": "too many requests"}, status_code=429, headers={"Retry-After": "60"}
+                )(scope, receive, send)
+                return
+            ok, _checks = await _readiness_pruefung()
             await JSONResponse({"status": "ready" if ok else "unready"}, status_code=200 if ok else 503)(
                 scope, receive, send
             )
             return
         if path == "/healthz/deep" and authorized:
             ok, checks = await health.ready(mcp, deep=True)
-            await JSONResponse({"status": "ready" if ok else "unready", "checks": checks})(
-                scope, receive, send
-            )
+            # Statuscode wie bei /healthz/ready: Monitoring, das den Code wertet, darf
+            # eine kaputte Instanz nicht für bereit halten (BE-01).
+            await JSONResponse(
+                {"status": "ready" if ok else "unready", "checks": checks},
+                status_code=200 if ok else 503,
+            )(scope, receive, send)
             return
         if path == "/ui" or path.startswith("/ui/"):
             # Die Seite selbst und der Login sind offen; alle Daten-Endpunkte nicht.
@@ -675,6 +765,17 @@ class BearerGate:
             if path.startswith("/ui/setup"):
                 import setup_wizard
 
+                # Dienst-Neustart nach dem Wizard: Er ist gerade im EINGERICHTETEN
+                # Zustand gedacht, lag aber hinter der 409-Selbstsperre unten und war
+                # so in KEINEM Zustand erreichbar (BE-10). Also von der 409 ausnehmen:
+                # vor der Einrichtung lehnt der Handler selbst mit 400 ab, danach darf
+                # ihn nur ein angemeldeter Client auslösen (offener Restart = DoS).
+                if path == "/ui/setup/restart":
+                    if authorized or not setup_wizard.is_configured():
+                        await ui.ui_app(scope, receive, send)
+                    else:
+                        await JSONResponse({"error": "unauthorized"}, status_code=401)(scope, receive, send)
+                    return
                 if setup_wizard.is_configured() and path != "/ui/setup/status":
                     await JSONResponse({"error": "System ist bereits eingerichtet"}, status_code=409)(
                         scope, receive, send

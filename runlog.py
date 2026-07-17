@@ -40,6 +40,13 @@ from pathlib import Path
 DATA_DIR = Path(os.environ.get("KMCP_DATA_DIR", str(Path(__file__).resolve().parent)))
 RUNS_DIR = DATA_DIR / "build-logs" / "runs"
 
+# Log-Rotation / Lesedeckel (CE-10): Eine Datei je Nachtlauf + je UI-/MCP-Build wuchse
+# unbegrenzt, und jede Verlaufsauswertung las irgendwann ALLE Dateien. Es bleiben die
+# jüngsten MAX_RUN_DATEIEN Dateien liegen (älteste werden gelöscht); der Verlauf liest
+# höchstens die neuesten VERLAUF_LESE_LIMIT — beides deckelt Platte und Leseaufwand.
+MAX_RUN_DATEIEN = 200
+VERLAUF_LESE_LIMIT = 100
+
 
 def _now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime())
@@ -62,6 +69,28 @@ def _schreibe(doc: dict) -> None:
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         json.dump(doc, f, indent=1, ensure_ascii=False)
     os.replace(tmp, _pfad(doc["run_id"]))
+    _rotiere()
+
+
+def _rotiere() -> None:
+    """Älteste Lauf-Dateien entfernen, sobald mehr als MAX_RUN_DATEIEN liegen.
+
+    run-<zeitstempel>.json sortiert lexikalisch = chronologisch (Kollisions-Suffixe
+    stehen direkt hinter ihrem Lauf — für die Rotation gleichwertig). Fehler beim
+    Löschen einzelner Dateien dürfen den Lauf selbst nie kippen.
+    """
+    try:
+        dateien = sorted(RUNS_DIR.glob("run-*.json"))
+    except OSError:
+        return
+    ueberzaehlig = len(dateien) - MAX_RUN_DATEIEN
+    if ueberzaehlig <= 0:
+        return
+    for alt in dateien[:ueberzaehlig]:
+        try:
+            alt.unlink()
+        except OSError:
+            pass
 
 
 def start(kind: str, backend: str = "", model: str = "") -> str:
@@ -133,7 +162,7 @@ def _letzter_stand(name: str, ausser: str) -> int | None:
         dateien = sorted(RUNS_DIR.glob("run-*.json"), reverse=True)
     except OSError:
         return None
-    for f in dateien:
+    for f in dateien[:VERLAUF_LESE_LIMIT]:  # gedeckelt: nie ALLE Dateien lesen (Rotation s. _rotiere)
         if f.stem == ausser:
             continue
         try:

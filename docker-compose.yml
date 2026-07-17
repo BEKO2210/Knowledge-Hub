@@ -3,8 +3,9 @@
 #   docker compose up -d          # startet den Hub
 #   → http://localhost:8300/ui    # Einrichtungs-Assistent im Browser
 #
-# Alles Dauerhafte (Konfiguration, Vault, Wissensgraphen) liegt im Volume `hub-data`.
-# Deine Projekte werden schreibgeschützt eingehängt — der Hub liest sie nur.
+# Alles Dauerhafte (Konfiguration, Vault, Wissensgraphen, Notizen) liegt im Volume `hub-data`.
+# Deine Projekte werden eingehängt — der Hub analysiert sie und schreibt beim
+# Mapping-Build jeweils einen Ordner `graphify-out/` in den Projektordner.
 
 services:
   knowledge-hub:
@@ -22,13 +23,18 @@ services:
 
     volumes:
       - hub-data:/data
-      # Mount your own projects here (read-only). Example:
-      # - /srv/projects/payments-api:/projects/payments-api:ro
-      # - /srv/projects/web-storefront:/projects/web-storefront:ro
-      - ./projects:/projects:ro
+      # Mount your own projects here (read-write). Example:
+      # - /srv/projects/payments-api:/projects/payments-api
+      # - /srv/projects/web-storefront:/projects/web-storefront
+      # WICHTIG: Der Mapping-Build schreibt `graphify-out/` IN den Projektordner —
+      # ein `:ro`-Mount lässt jeden Build am Projekt scheitern (read-only filesystem).
+      # Wer Projekte nur lesen lassen will, mountet :ro und führt das Mapping
+      # dann auf dem Host statt im Container aus.
+      - ./projects:/projects
 
-    # Der Nacht-Job läuft im Container-Cron; alternativ vom Host aus:
-    #   docker compose exec knowledge-hub ./nightly-map.sh
+    # Das Image enthält KEINEN Cron — der Nacht-Job läuft NICHT automatisch im
+    # Container. Extern einrichten, z. B. per Host-Cron oder systemd-Timer:
+    #   docker compose exec knowledge-hub /app/nightly-map.sh
 
 volumes:
   hub-data:
