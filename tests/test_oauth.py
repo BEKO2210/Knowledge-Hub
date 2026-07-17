@@ -184,3 +184,21 @@ def test_tokens_liegen_nur_als_hash_auf_der_platte(client, fresh_vault):
 
     roh = (TMP / "oauth_state.json").read_text()
     assert access not in roh, "Der Token selbst darf NICHT in der Datei stehen"
+
+
+def test_consent_csp_blockiert_cross_origin_redirect_nicht(client, fresh_vault):
+    """Regression: `form-action 'self'` auf der Consent-Seite verbot dem Browser, dem
+    302 zur (serverseitig geprüften) redirect_uri des Clients zu folgen — das brach
+    JEDEN OAuth-Login (ChatGPT/Claude blieben auf der Zustimmungsseite hängen)."""
+    cid = _register(client)
+    _, challenge = _pkce()
+    r = client.get("/oauth/authorize", params={
+        "response_type": "code", "client_id": cid, "redirect_uri": REDIRECT,
+        "scope": "mcp", "code_challenge": challenge, "code_challenge_method": "S256",
+    })
+    csp = r.headers.get("content-security-policy", "")
+    assert csp, "CSP-Header fehlt auf der Consent-Seite"
+    assert "form-action" not in csp, f"form-action bricht den OAuth-Redirect: {csp}"
+    # Positivkontrolle: ein voller Consent-POST leitet weiter (302 mit Location).
+    resp = _authorize(client, cid, challenge)
+    assert resp.status_code == 302 and "location" in resp.headers

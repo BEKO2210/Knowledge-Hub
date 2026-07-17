@@ -628,10 +628,14 @@ class _SecurityHeaders(BaseHTTPMiddleware):
 
     async def dispatch(self, request, call_next):
         resp = await call_next(request)
+        # KEIN form-action: Die Consent-Seite MUSS nach dem Absenden per 302 an die
+        # (serverseitig geprüfte) redirect_uri des Clients weiterleiten — meist eine
+        # Fremd-Origin wie chatgpt.com. `form-action 'self'` verbietet dem Browser
+        # genau diese Weiterleitung (CSP prüft auch Redirect-Ziele) und bricht damit
+        # JEDEN OAuth-Login. Clickjacking-Schutz kommt aus frame-ancestors + X-Frame.
         resp.headers.setdefault(
             "Content-Security-Policy",
-            "default-src 'none'; style-src 'unsafe-inline'; "
-            "frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+            "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'",
         )
         resp.headers["X-Content-Type-Options"] = "nosniff"
         resp.headers["X-Frame-Options"] = "DENY"
@@ -650,5 +654,5 @@ oauth_app = Starlette(
         Route("/oauth/register", _register, methods=["POST"]),
         Route("/oauth/authorize", _authorize, methods=["GET", "POST"]),
         Route("/oauth/token", _token, methods=["POST"]),
-    ]
+    ],
 )
