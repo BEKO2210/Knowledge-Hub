@@ -201,3 +201,14 @@ def test_laufzeitzustand_wird_nicht_als_architektur_gemappt(tmp_path):
         f.write_text("{}")
     gefunden = {str(f.relative_to(projekt)) for f in extraction.iter_files(projekt)}
     assert gefunden == {"server.py", "config.example.yaml"}, gefunden
+
+
+def test_backup_repo_wird_vom_mapping_ausgeschlossen():
+    """Regression: ~/knowledge-mcp/backup-repo/ enthält verschlüsselte Off-Site-Backups
+    ANDERER Projekte (Asto/Bookit/Elementa). Ohne Ausschluss floss deren Inhalt in den
+    knowledge-mcp-Graphen (Fremd-Knoten, aufgeblähte Zahl, schlechtere Präzision)."""
+    import extraction
+    import semantic
+
+    assert "backup-repo" in extraction.SKIP_DIRS
+    assert "backup-repo" in semantic.SKIP_DIRS

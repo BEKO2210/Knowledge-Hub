@@ -211,3 +211,20 @@ def test_parallele_notizen_mit_gleichem_titel(fresh_vault):
     assert len(dateien) == 6, f"6 Notizen gespeichert, nur {len(dateien)} Dateien: {dateien}"
     inhalte = {(server.NOTES_ROOT / "rennen" / d).read_text() for d in dateien}
     assert len(inhalte) == 6, "Keine Notiz darf den Inhalt einer anderen tragen"
+
+
+def test_graph_query_lehnt_leere_frage_ab(monkeypatch):
+    """Regression: das MCP-Tool graph_query hatte — anders als die Web-UI (graph_ask) —
+    keine Frage-Guard. Für question="" wählte die Retrieval-Engine beliebige Startknoten
+    und lieferte eine scheinbar gültige, aber unbegründete Antwort. Jetzt: klarer
+    ValueError, bevor überhaupt ein Knoten angefasst wird — auch über den echten
+    MCP-Client als ToolError sichtbar."""
+    monkeypatch.setattr(server, "_projects", lambda: {"demo"})
+    for frage in ("", "   ", "\n\t", "ab"):
+        with pytest.raises(ValueError, match="question"):
+            server.graph_query("demo", frage)
+    # Gültige Frage passiert die Guard (Ergebnis egal — sie darf nur nicht AN der Guard scheitern).
+    try:
+        server.graph_query("demo", "was macht die Auth?")
+    except ValueError as e:
+        assert "question must not be empty" not in str(e)

@@ -51,6 +51,7 @@ SKIP_DIRS = {
     ".pytest_cache",
     ".ruff_cache",
     "backups",
+    "backup-repo",  # verschlüsselte Off-Site-Backups ANDERER Projekte — nie ins Wissen
     "logs",
     "data",
 }

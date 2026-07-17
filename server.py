@@ -176,6 +176,12 @@ def graph_query(project: str, question: str, budget_tokens: int = 1200) -> str:
     """Answer a question about a project's codebase (hybrid: knowledge graph + relevant file excerpts)."""
     if project not in _projects():
         raise ValueError(f"unknown project {project!r}; known: {_projects()}")
+    # Leere/zu kurze Frage: die Web-UI (graph_ask) lehnt das ab — das MCP-Tool tat es
+    # nicht und die Retrieval-Engine lieferte für "" beliebige Startknoten als schein-
+    # bar gültige Antwort. Hier dieselbe Guard, sonst sind die Ergebnisse unbegründet.
+    question = question.strip()
+    if len(question) < 3:
+        raise ValueError("question must not be empty (min. 3 characters)")
     # Dreistufige Kette: Hybrid → semantischer Graph → graphify-CLI.
     # graph_query darf nie an einem fehlenden Index oder Modell scheitern.
     try:
