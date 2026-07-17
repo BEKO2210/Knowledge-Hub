@@ -1,4 +1,5 @@
-# Minifizierter/generierter Code — kein Architekturwissen.
+# Minifizierte, vendored und generierte Dateien: verzerren den Graphen
+# (graphify liest zusätzlich .gitignore — hier steht nur, was dort fehlt).
 *.min.js
 *.min.css
 *.min.mjs
@@ -7,9 +8,30 @@
 *.chunk.js
 vendor/
 third_party/
-# Laufzeit-/Fremd-Verzeichnisse des Hubs: gehören NIE in den knowledge-mcp-Graphen
-# (deckungsgleich mit extraction.SKIP_STATE_DIRS + semantic.SKIP_DIRS). Ohne das zog
-# graphifys eigener Scan backup-repo/<fremdprojekt> und answers/ in den Graphen.
+
+# Secrets/Credentials: niemals extrahieren (Defense-in-Depth —
+# .gitignore allein schützt nicht, graphify liest nur diese Datei)
+.env
+.env.*
+*.env
+*.key
+*.pem
+id_rsa*
+*secret*
+*credential*
+# Beispiele/Templates bleiben erlaubt: Leser mit gitignore-Semantik nehmen die
+# Negation; die Hub-Extraktion lässt .example/.sample/.template ohnehin durch.
+!*.example
+!*.sample
+!*.template
+
+# Hub-State: gehört nie in einen Wissensgraphen
+config.yaml
+vault.enc*
+vault.lock
+oauth_state.json
+# Laufzeit-/Fremd-Verzeichnisse des Hubs (backup-repo = Off-Site-Backups ANDERER Projekte):
+# gehoeren NIE in den knowledge-mcp-Graphen. Deckungsgleich mit extraction/semantic SKIP_DIRS.
 backup-repo/
 answers/
 build-logs/
