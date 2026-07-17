@@ -69,7 +69,14 @@ DEFAULTS: dict = {
                 "env": "OPENAI_API_KEY",
                 "key_url": "https://platform.openai.com/api-keys",
                 "models": [{"id": "gpt-4.1-mini", "hint": "recommended"}],
-            }
+            },
+            # Keyloses Backend: mappt/labelt über die lokale Claude-Code-CLI (`claude -p`)
+            # und das Abo statt über einen bezahlten API-Key. Kein secret/env nötig.
+            "claude-cli": {
+                "label": "Claude Code (CLI, kein API-Key)",
+                "api": "claude-cli",
+                "models": [{"id": "claude-code-plan", "hint": "über Claude-Code-Abo"}],
+            },
         },
         "projects": [],  # Liste von {path: str, enabled: bool}
     },

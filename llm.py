@@ -12,12 +12,19 @@ Zwei API-Formen:
 from __future__ import annotations
 
 import json
+import os
 import re
+import shutil
+import subprocess
+import tempfile
 import time
 import urllib.error
 import urllib.request
 
 TIMEOUT = 120
+# claude -p kann pro Aufruf deutlich länger brauchen als eine HTTP-API (es startet
+# eine ganze Claude-Code-Instanz). Eigener, großzügigerer Deckel.
+CLI_TIMEOUT = 300
 
 # Transiente Antworten, bei denen sich ein Retry lohnt (Rate-Limit, Serverfehler) —
 # der Anthropic-Pfad wiederholt die im SDK intern, der eigene urllib-Pfad hier.
@@ -183,6 +190,77 @@ def _call_anthropic(
     }
 
 
+def _claude_cli_envelope(stdout: str) -> dict:
+    """Parst die JSON-Hülle von `claude -p --output-format json`.
+
+    Je nach CLI-Version ist das ein Objekt {result, usage, …} oder eine Liste, in der
+    das Ergebnis-Objekt (type=="result") gesucht werden muss.
+    """
+    try:
+        data = json.loads(stdout)
+    except json.JSONDecodeError as e:
+        raise LLMError(f"claude -p lieferte kein gültiges JSON: {str(e)[:120]}") from e
+    if isinstance(data, list):
+        for eintrag in reversed(data):
+            if isinstance(eintrag, dict) and (eintrag.get("type") == "result" or "result" in eintrag):
+                return eintrag
+        raise LLMError("claude -p JSON-Array ohne Ergebnis-Objekt.")
+    if isinstance(data, dict):
+        return data
+    raise LLMError("claude -p JSON weder Objekt noch Liste.")
+
+
+def _call_claude_cli(model: str, system: str, user: str, limit: int = 900) -> tuple[str, dict[str, int]]:
+    """Ruft Claude über die lokale Claude-Code-CLI (`claude -p`) — nutzt das Abo statt
+    eines bezahlten API-Keys. Kein Key nötig; die Auth der CLI wird verwendet.
+    """
+    claude = shutil.which("claude") or os.path.expanduser("~/.local/bin/claude")
+    if not (claude and os.path.exists(claude)):
+        raise LLMError("Claude-Code-CLI ('claude') nicht gefunden — für Backend 'claude-cli' nötig.")
+
+    prompt = (
+        f"{system}\n\n---\n"
+        "Bearbeite ausschließlich die folgende Aufgabe/Quelle und gib NUR das geforderte "
+        "JSON-Objekt aus — keine Prosa, keine Einleitung, keine Markdown-Zäune.\n\n"
+        f"{user}"
+    )
+    args = [claude, "-p", "--output-format", "json", "--no-session-persistence"]
+    # Modell nur weiterreichen, wenn es ein echter CLI-Wert ist (sonnet/haiku/opus oder
+    # eine volle Modell-ID). Der Platzhalter "claude-code-plan" → Standardmodell des Abos.
+    m = (model or "").strip()
+    if m and m != "claude-code-plan" and re.match(r"^(sonnet|haiku|opus|claude-)", m):
+        args += ["--model", m]
+
+    try:
+        # In neutralem cwd starten, damit die CLI nicht CLAUDE.md/Skills/MCP eines
+        # Projektordners mitzieht (Kontext-Ballast, potenzielle Seiteneffekte).
+        proc = subprocess.run(  # noqa: S603 - fixe Argumente, kein Shell
+            args,
+            input=prompt,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=CLI_TIMEOUT,
+            cwd=tempfile.gettempdir(),
+            check=False,
+        )
+    except subprocess.TimeoutExpired as e:
+        raise LLMError(f"claude -p Zeitüberschreitung nach {CLI_TIMEOUT}s.") from e
+    except OSError as e:
+        raise LLMError(f"claude -p nicht ausführbar: {e}") from e
+    if proc.returncode != 0:
+        raise LLMError(f"claude -p endete mit Code {proc.returncode}: {proc.stderr.strip()[:200]}")
+
+    env = _claude_cli_envelope(proc.stdout)
+    text = (env.get("result") or "").strip()
+    if not text:
+        raise LLMError("claude -p lieferte keinen Text (leeres result).")
+    u = env.get("usage") or {}
+    tin = int(u.get("input_tokens", 0) or 0) + int(u.get("cache_read_input_tokens", 0) or 0)
+    return text, {"in": tin, "out": int(u.get("output_tokens", 0) or 0)}
+
+
 def ask(
     backend: dict,
     model: str,
@@ -203,7 +281,9 @@ def ask(
     verbuchen, während Chat/Explain den Parameter einfach weglassen.
     """
     api = backend.get("api", "openai")
-    if api == "anthropic":
+    if api == "claude-cli":
+        text, u = _call_claude_cli(model, system, user, limit)
+    elif api == "anthropic":
         text, u = _call_anthropic(key, model, system, user, limit)
     else:
         base = backend.get("base_url")

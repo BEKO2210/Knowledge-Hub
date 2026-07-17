@@ -327,18 +327,23 @@ def _build_worker_gesperrt(name: str, path: Path) -> None:
         label_args: list[str] = []
         try:
             m = CFG["mapping"]
-            binfo = m.get("backends", {}).get(m.get("backend", ""), {})
+            backend_name = m.get("backend", "")
+            binfo = m.get("backends", {}).get(backend_name, {})
             secret_name, envvar = binfo.get("secret"), binfo.get("env")
             key = vault.secret_get(secret_name, client="graph_build") if secret_name else None
-            if key and envvar:
-                env[envvar] = key
+            # Keylose Backends (claude-cli über die Claude-Code-CLI) brauchen weder
+            # Vault-Key noch env — sie labeln über das Abo, nicht über einen API-Key.
+            keyless = binfo.get("api") == "claude-cli" or backend_name == "claude-cli"
+            if (key and envvar) or keyless:
+                if key and envvar:
+                    env[envvar] = key
                 label_args = [
                     GRAPHIFY_BIN,
                     "label",
                     str(path),
                     "--missing-only",
                     "--backend",
-                    m.get("backend", ""),
+                    backend_name,
                     "--model",
                     m.get("model", ""),
                 ]
