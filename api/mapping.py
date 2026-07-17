@@ -22,7 +22,16 @@ from api.common import DATA_DIR, GRAPHIFY_BIN, KNOWLEDGE_ROOT, json_object
 from api.i18n import T
 
 # ---------------------------------------------------------------------------
-TIMER_FILE = Path.home() / ".config" / "systemd" / "user" / "nightly-map.timer"
+# Instanz-bewusster Nachtlauf-Unit: mehrere Hub-Instanzen (Haupt-Hub + hub2)
+# teilen sich denselben Code, dürfen aber NICHT denselben systemd-Unit starten,
+# sonst mappt eine Instanz die Projekte der anderen und überschreibt deren Timer.
+# Der Unit-Basisname kommt aus der Umgebung; ohne Env bleibt es „nightly-map"
+# (Haupt-Hub unverändert, rückwärtskompatibel). hub2 setzt KMCP_MAP_UNIT im
+# Service auf „nightly-map-hub2".
+_MAP_UNIT = os.environ.get("KMCP_MAP_UNIT", "nightly-map")
+_MAP_SERVICE = f"{_MAP_UNIT}.service"
+_MAP_TIMER = f"{_MAP_UNIT}.timer"
+TIMER_FILE = Path.home() / ".config" / "systemd" / "user" / _MAP_TIMER
 NIGHTLY_LOG_DIR = DATA_DIR / "build-logs"
 
 # Empfohlene Standard-Ausschlüsse: minifizierte, vendored und generierte Dateien
@@ -409,9 +418,9 @@ async def mapping_dismiss(request: Request) -> JSONResponse:
 
 async def mapping_status(request: Request) -> JSONResponse:
     cfg = config.load()  # frisch laden: Backend/Modell sind zur Laufzeit änderbar
-    _, enabled = _sysctl("is-enabled", "nightly-map.timer")
-    _, active = _sysctl("is-active", "nightly-map.service")
-    _, next_run = _sysctl("show", "nightly-map.timer", "--property=NextElapseUSecRealtime", "--value")
+    _, enabled = _sysctl("is-enabled", _MAP_TIMER)
+    _, active = _sysctl("is-active", _MAP_SERVICE)
+    _, next_run = _sysctl("show", _MAP_TIMER, "--property=NextElapseUSecRealtime", "--value")
     backend_name, backend = config.active_backend(cfg)
     stored = set(vault.secret_list(client="web-ui"))
 
@@ -453,8 +462,8 @@ async def mapping_status(request: Request) -> JSONResponse:
 async def mapping_toggle(request: Request) -> JSONResponse:
     body = await json_object(request)
     on = bool(body.get("enabled"))
-    code, out = _sysctl("enable" if on else "disable", "--now", "nightly-map.timer")
-    vault.audit("MAPPING-ON" if on else "MAPPING-OFF", "nightly-map.timer", client="web-ui")
+    code, out = _sysctl("enable" if on else "disable", "--now", _MAP_TIMER)
+    vault.audit("MAPPING-ON" if on else "MAPPING-OFF", _MAP_TIMER, client="web-ui")
     if code != 0:
         return JSONResponse({"error": out[:300]}, status_code=500)
     return JSONResponse({"ok": True, "enabled": on})
@@ -479,18 +488,18 @@ async def mapping_config(request: Request) -> JSONResponse:
     TIMER_FILE.write_text(TIMER_TEMPLATE.format(time=t))
     config.save_mapping(backend, model)
     _sysctl("daemon-reload")
-    _, enabled = _sysctl("is-enabled", "nightly-map.timer")
+    _, enabled = _sysctl("is-enabled", _MAP_TIMER)
     if enabled == "enabled":
-        _sysctl("restart", "nightly-map.timer")
+        _sysctl("restart", _MAP_TIMER)
     vault.audit("MAPPING-CONFIG", f"{t} {backend}/{model}", client="web-ui")
     return JSONResponse({"ok": True})
 
 
 async def mapping_run(request: Request) -> JSONResponse:
-    _, active = _sysctl("is-active", "nightly-map.service")
+    _, active = _sysctl("is-active", _MAP_SERVICE)
     if active in ("active", "activating"):
         return JSONResponse({"error": T("Läuft bereits")}, status_code=409)
-    code, out = _sysctl("start", "--no-block", "nightly-map.service")
+    code, out = _sysctl("start", "--no-block", _MAP_SERVICE)
     vault.audit("MAPPING-RUN", "manuell gestartet", client="web-ui")
     if code != 0:
         return JSONResponse({"error": out[:300]}, status_code=500)

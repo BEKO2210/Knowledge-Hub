@@ -46,7 +46,7 @@ if [ -n "$SECRET" ]; then
     "http://127.0.0.1:$PORT/ui/api/secrets/$SECRET" \
     | python3 -c 'import sys,json;print(json.load(sys.stdin).get("value",""))' 2>/dev/null)"
   if [ -z "$KEY" ]; then
-    echo "HINWEIS: kein Key '$SECRET' im Vault — mappe nur Code (--code-only), Docs übersprungen"
+    echo "HINWEIS: kein Key '$SECRET' im Vault — extraction.py mappt offline (Struktur: Überschriften, Definitionen, Config-Schlüssel); nur der graphify-Fallback bliebe --code-only"
     EXTRA_ARGS+=(--code-only)
   else
     export "$ENVVAR=$KEY"
@@ -111,8 +111,11 @@ for p in "${PROJECTS[@]}"; do
   # (Datei-Hash-Cache, unveränderte Dateien kosten keinen LLM-Aufruf) und mit voller
   # Coverage (Compose, Configs, Docs — Benchmark: Lumo 3/3 statt 0/3). Clustering,
   # Report und graph.html liefert danach graphify cluster-only aus unserer graph.json.
-  # Schlägt die eigene Extraktion fehl, übernimmt das klassische graphify extract.
-  if [ ${#EXTRA_ARGS[@]} -eq 0 ] && "$PY" "$HUB/extraction.py" "$p"; then
+  # extraction.py läuft IMMER zuerst — ohne Key/Guthaben schaltet es selbst auf
+  # Offline-Struktur um (statt wie früher via --code-only Docs-Projekte leer zu lassen
+  # und den Cluster-Schritt auf einer leeren graph.json crashen zu lassen). Nur wenn
+  # extraction.py selbst scheitert, übernimmt das klassische graphify extract.
+  if "$PY" "$HUB/extraction.py" "$p"; then
     if ! "$HUB/tools/graphify-cluster-force" "$p" --no-label; then
       echo "cluster-only fehlgeschlagen: $p — stelle vorherige Generation wieder her"
       "$PY" "$HUB/buildmeta.py" restore "$p" || echo "PROBLEM: restore fehlgeschlagen: $p"

@@ -210,6 +210,134 @@ def _parse_json(raw: str) -> dict | None:
     return json.loads(re.sub(r",\s*([}\]])", r"\1", m.group(0)))  # tolerante Kommas
 
 
+class _LLMDauerhaft(Exception):
+    """Nicht-heilbarer LLM-Fehler (kein Guthaben, ungültiger/fehlender Key, keine
+    Berechtigung). Anders als ein Parse- oder Netzfehler lohnt sich KEIN Retry pro
+    Datei — die ganze Extraktion schaltet stattdessen auf Offline-Struktur um."""
+
+
+# Fehlertexte der Anbieter, bei denen jeder weitere API-Aufruf sinnlos ist. Bewusst
+# breit (Anthropic/OpenAI/Gemini/… formulieren unterschiedlich), aber ohne transiente
+# Begriffe wie „rate limit" (die behandelt llm.py als 429-Retry).
+_DAUERHAFT_MUSTER = (
+    "credit balance",
+    "insufficient",
+    "quota",
+    "billing",
+    "payment required",
+    "invalid api key",
+    "invalid x-api-key",
+    "incorrect api key",
+    "invalid_api_key",
+    "authentication",
+    "unauthorized",
+    "permission",
+    "forbidden",
+    "access denied",
+    "not have access",
+    "expired",
+    " 401",
+    " 403",
+    "antwortete 401",
+    "antwortete 403",
+)
+
+
+def _ist_dauerhaft(msg: str) -> bool:
+    m = msg.lower()
+    return any(w in m for w in _DAUERHAFT_MUSTER)
+
+
+def _kurz_grund(msg: str) -> str:
+    """Menschlicher Kurzgrund fürs Log — kein roher Anbieter-Stacktrace."""
+    m = msg.lower()
+    if "credit" in m or "billing" in m or "payment" in m:
+        return "kein Guthaben beim KI-Anbieter"
+    if "quota" in m or "insufficient" in m:
+        return "Kontingent/Guthaben erschöpft"
+    if "invalid" in m and "key" in m or "incorrect api key" in m or "invalid_api_key" in m:
+        return "KI-Key ungültig"
+    if "auth" in m or "unauthorized" in m or "401" in m or "403" in m or "forbidden" in m:
+        return "KI-Key nicht autorisiert"
+    return msg.strip()[:100]
+
+
+# Suffix-Gruppen für die Offline-Struktur-Extraktion (ohne LLM).
+_DOC_SUFFIXES = {".md", ".markdown", ".txt", ".rst"}
+_CODE_SUFFIXES = {".py", ".ts", ".tsx", ".js", ".jsx", ".mjs"}
+_CONF_SUFFIXES = {".yaml", ".yml", ".toml", ".ini", ".conf", ".service", ".timer"}
+_HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*#*$")
+_DEF_RE = re.compile(
+    r"^(?:export\s+)?(?:default\s+)?(?:async\s+)?(?:function|class|const|def|interface|type)\s+"
+    r"([A-Za-z_][A-Za-z0-9_]*)",
+    re.M,
+)
+_CONF_KEY_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_.\-]*)\s*[:=]", re.M)
+
+
+def _snippet(text: str, ab_zeile: int, laenge: int = 220) -> str:
+    """Ein paar Zeilen ab einer Position als knappe rationale (Fakten wörtlich)."""
+    rest = "\n".join(text.splitlines()[ab_zeile : ab_zeile + 6]).strip()
+    return re.sub(r"\s+", " ", rest)[:laenge]
+
+
+def _offline_extract(rel: str, text: str) -> dict:
+    """Struktur-Extraktion OHNE LLM: Überschriften (Docs), Top-Level-Definitionen
+    (Code) und Konfigurationsschlüssel werden zu Knoten. Erzeugt immer einen
+    verwertbaren, nicht-leeren Beitrag zum Graphen — so greift der Nachtlauf auch
+    ohne Key/Guthaben und der Cluster-Schritt bekommt echten Inhalt statt zu
+    scheitern. Semantik/Fakten-Zusammenfassungen bleiben der KI vorbehalten."""
+    from pathlib import Path as _P
+
+    suffix = _P(rel).suffix.lower()
+    name = _P(rel).name
+    entities: list[dict] = []
+    lines = text.splitlines()
+
+    if suffix in _DOC_SUFFIXES:
+        for i, line in enumerate(lines):
+            m = _HEADING_RE.match(line)
+            if m:
+                entities.append(
+                    {"label": m.group(2).strip(), "type": "doc", "rationale": _snippet(text, i + 1)}
+                )
+        if not entities:  # kein Markdown-Titel: erste nicht-leere Zeile als Titel
+            titel = next((z.strip() for z in lines if z.strip()), name)
+            entities.append({"label": titel[:80], "type": "doc", "rationale": _snippet(text, 0)})
+    elif suffix in _CODE_SUFFIXES:
+        for m in _DEF_RE.finditer(text):
+            entities.append(
+                {"label": m.group(1), "type": "code", "rationale": f"Top-Level-Definition in {rel}"}
+            )
+    elif suffix in _CONF_SUFFIXES or name in SPECIAL_NAMES:
+        for m in _CONF_KEY_RE.finditer(text):
+            entities.append(
+                {"label": m.group(1), "type": "config", "rationale": f"Konfigurationsschlüssel in {rel}"}
+            )
+    elif suffix == ".json":
+        try:
+            obj = json.loads(text)
+        except (ValueError, TypeError):
+            obj = None
+        if isinstance(obj, dict):
+            for k in list(obj):
+                entities.append({"label": str(k), "type": "config", "rationale": f"JSON-Schlüssel in {rel}"})
+
+    # Nach Label deduplizieren und deckeln (max. 12 Knoten pro Datei, wie beim LLM).
+    seen: set[str] = set()
+    uniq: list[dict] = []
+    for e in entities:
+        lab = str(e.get("label", "")).strip()
+        if lab and lab.lower() not in seen:
+            seen.add(lab.lower())
+            uniq.append({**e, "label": lab})
+        if len(uniq) >= 12:
+            break
+    # relations bewusst leer: build_graph verknüpft die Knoten über den Datei-Knoten
+    # ("contains") — verlässlich und ohne erfundene Kanten.
+    return {"entities": uniq, "relations": []}
+
+
 def extract_file(
     ask, backend: dict, model: str, key: str, rel: str, text: str, usage: dict | None = None
 ) -> dict | None:
@@ -217,11 +345,19 @@ def extract_file(
     user = f"Datei: {rel}\n\n{text[:MAX_CHARS]}"
     for attempt in (1, 2):
         try:
-            data = _parse_json(ask(backend, model, key, SYSTEM_PROMPT, user, limit=3000, usage=usage))
+            raw = ask(backend, model, key, SYSTEM_PROMPT, user, limit=3000, usage=usage)
         except Exception as e:  # noqa: BLE001 - eine kaputte Datei stoppt nicht den Lauf
+            # Dauerhafter Fehler (kein Guthaben, Key ungültig/fehlt, keine Berechtigung):
+            # kein Retry, kein Weitermachen mit der API — der Aufrufer schaltet offline.
+            if _ist_dauerhaft(str(e)):
+                raise _LLMDauerhaft(str(e)) from e
             if attempt == 2:
                 print(f"  WARN {rel}: {e}", file=sys.stderr)
             continue
+        try:
+            data = _parse_json(raw)
+        except (ValueError, TypeError):
+            data = None
         # JSON-freie Antwort oder valides JSON falschen Typs → zählt als Fehlversuch
         if isinstance(data, dict):
             return data
@@ -333,9 +469,18 @@ def _extraktion_ok(data: dict) -> bool:
 
 
 def extract_project(
-    root: Path, ask=None, backend: dict | None = None, model: str = "", key: str = ""
+    root: Path,
+    ask=None,
+    backend: dict | None = None,
+    model: str = "",
+    key: str = "",
+    offline: bool = False,
 ) -> dict:
-    """Inkrementelle Extraktion. Rückgabe: Statistik (files, changed, nodes, edges)."""
+    """Inkrementelle Extraktion. Rückgabe: Statistik (files, changed, nodes, edges).
+
+    offline=True (kein Key/Guthaben) → reine Struktur-Extraktion ohne LLM. Auch bei
+    offline=False wird bei einem dauerhaften LLM-Fehler (kein Guthaben, Key ungültig)
+    ab der ersten betroffenen Datei automatisch auf Offline umgeschaltet."""
     out_dir = root / "graphify-out"
     out_dir.mkdir(exist_ok=True)
     cache_file = out_dir / CACHE_NAME
@@ -352,6 +497,7 @@ def extract_project(
 
     seen, changed = set(), 0
     usage = {"in": 0, "out": 0, "calls": 0}
+    offline_grund = "kein KI-Key im Vault" if offline else ""
     for f in iter_files(root):
         rel = str(f.relative_to(root))
         seen.add(rel)
@@ -360,13 +506,30 @@ def extract_project(
         except OSError:
             continue
         h = hashlib.sha256(text.encode("utf-8")).hexdigest()
-        if cache.get(rel, {}).get("hash") == h:
-            continue  # unverändert → kein LLM-Aufruf
-        data = extract_file(ask, backend, model, key, rel, text, usage=usage)
-        if data is not None and not _extraktion_ok(data):
-            # valides JSON mit unerwarteter Struktur — früher AttributeError im Nachtlauf
-            print(f"  WARN {rel}: LLM-Antwort mit falschem Typ verworfen", file=sys.stderr)
-            data = None
+        prev = cache.get(rel, {})
+        # Unverändert überspringen — ABER einen früher offline gemappten Eintrag neu
+        # extrahieren, sobald wieder ein KI-Key/Guthaben da ist (sonst bliebe der
+        # Graph für immer bei der Struktur-Notlösung hängen).
+        if prev.get("hash") == h and not (not offline and prev.get("mode") == "offline"):
+            continue
+        data = None
+        if not offline:
+            try:
+                data = extract_file(ask, backend, model, key, rel, text, usage=usage)
+            except _LLMDauerhaft as e:
+                offline = True
+                offline_grund = str(e)
+                print(
+                    f"  HINWEIS: KI nicht verfügbar ({_kurz_grund(offline_grund)}) — "
+                    f"ab hier Offline-Mapping (nur Struktur).",
+                    file=sys.stderr,
+                )
+            if data is not None and not _extraktion_ok(data):
+                # valides JSON mit unerwarteter Struktur — früher AttributeError im Nachtlauf
+                print(f"  WARN {rel}: LLM-Antwort mit falschem Typ verworfen", file=sys.stderr)
+                data = None
+        if offline:
+            data = _offline_extract(rel, text)
         if data is None:
             # Datei nicht extrahierbar: alter Stand bleibt, statt Wissen zu verlieren
             if rel in cache:
@@ -375,6 +538,7 @@ def extract_project(
         changed += 1
         cache[rel] = {
             "hash": h,
+            "mode": "offline" if offline else "llm",
             "entities": data.get("entities", []),
             "relations": data.get("relations", []),
         }
@@ -391,6 +555,8 @@ def extract_project(
         "nodes": len(graph["nodes"]),
         "edges": len(graph["links"]),
         "usage": usage,
+        "mode": "offline" if offline else "llm",
+        "offline_grund": offline_grund,
     }
 
 
@@ -412,17 +578,34 @@ def main() -> int:
     _, backend = config.active_backend(cfg)
     model = cfg["mapping"].get("model", "gpt-4.1-mini")
     secret = backend.get("secret")
-    key = vault.secret_get(secret, client="hub-extract") if secret else ""
-    if secret and not key:
-        print("FEHLER: kein LLM-Key im Vault", file=sys.stderr)
-        return 1
+    key = ""
+    if secret:
+        try:
+            key = vault.secret_get(secret, client="hub-extract") or ""
+        except Exception as e:  # noqa: BLE001 - Vault gesperrt/kaputt darf den Lauf nicht töten
+            print(f"  HINWEIS: Vault nicht lesbar ({e}) — Offline-Mapping.", file=sys.stderr)
+            key = ""
+    # Kein Key/Guthaben ist KEIN Abbruch mehr: der Nachtlauf mappt offline (Struktur)
+    # weiter, damit das Projekt trotzdem einen verwertbaren Graphen bekommt.
+    offline = bool(secret) and not key
+    if offline:
+        print(
+            f"[hub-extract] {root.name}: kein KI-Key im Vault — Offline-Mapping "
+            f"(nur Struktur, keine KI-Semantik)."
+        )
 
     t0 = time.time()
-    stats = extract_project(root, ask=llm.ask, backend=backend, model=model, key=key)
+    stats = extract_project(root, ask=llm.ask, backend=backend, model=model, key=key, offline=offline)
+    modus = "offline" if stats.get("mode") == "offline" else "KI"
     print(
         f"[hub-extract] {root.name}: {stats['files']} Dateien, {stats['changed']} neu extrahiert, "
-        f"{stats['nodes']} Knoten, {stats['edges']} Kanten in {time.time() - t0:.0f}s"
+        f"{stats['nodes']} Knoten, {stats['edges']} Kanten in {time.time() - t0:.0f}s ({modus})"
     )
+    if stats.get("mode") == "offline" and stats.get("offline_grund"):
+        print(
+            f"[hub-extract] {root.name}: Grund: {_kurz_grund(stats['offline_grund'])}. "
+            f"Für KI-Semantik im Mapping-Tab Guthaben aufladen oder Anbieter wechseln."
+        )
     # Kosten dieses Laufs verbuchen: Tokens × Modellpreis (aus config.yaml). Ohne diese
     # Zeilen zählte die Mapping-Kostenanzeige den eigenen Extraktor als $0 (er löste
     # graphify als Standard ab, das die est.-cost-Zeilen früher lieferte). Format bewusst
