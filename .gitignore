@@ -45,3 +45,4 @@ plan.md
 chunk-index/
 .coverage
 backup-repo/
+.venv
