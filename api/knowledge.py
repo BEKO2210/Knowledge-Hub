@@ -223,7 +223,11 @@ ANTWORT_DIR = DATA_DIR / "answers"
 
 def _graph_stand(projekt: str) -> str:
     g = KNOWLEDGE_ROOT / projekt / "graphify-out" / "graph.json"
-    return str(int(g.stat().st_mtime)) if g.exists() else "0"
+    # st_mtime_ns (Nanosekunden) statt int(st_mtime) (Sekunden): Zwei Graph-Generationen
+    # innerhalb derselben Sekunde (schneller os.replace beim Re-Mapping) hätten sonst
+    # denselben Cache-Schlüssel — der Fragen-Tab lieferte eine Antwort der Vorgänger-
+    # generation, obwohl der Graph schon neu ist.
+    return str(g.stat().st_mtime_ns) if g.exists() else "0"
 
 
 def _speicher_pfad(projekt: str, art: str, frage: str, modell: str) -> Path:

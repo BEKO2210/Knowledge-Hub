@@ -503,6 +503,14 @@ def audit(action: str, name: str, client: str = "-") -> None:
         f"{_clean(action, 24)} {_clean(name)} client={_clean(client, 24)}\n"
     )
     _ensure_dir()  # audit.log liegt neben der vault.enc (Ersteinrichtung)
+    # Größenbegrenzung: audit.log wuchs bislang unbegrenzt (dokumentierte Schuld). Bei
+    # >5 MB einmal atomar nach audit.log.1 rotieren (eine Vorgängerdatei, erbt 0600 via
+    # os.replace) — deckelt den Verbrauch auf ~10 MB statt unbegrenzt.
+    try:
+        if AUDIT_PATH.stat().st_size > 5_000_000:
+            os.replace(AUDIT_PATH, AUDIT_PATH.with_name("audit.log.1"))
+    except OSError:
+        pass
     with AUDIT_PATH.open("a") as fh:
         # 0600 bei jedem Schreiben erzwingen: schützt Secret-Namen + Zugriffszeiten
         # vor Gruppen-/Weltlesern und heilt eine mit falscher umask (664) angelegte

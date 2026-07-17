@@ -48,8 +48,11 @@ ENV KNOWLEDGE_CONFIG=/data/config.yaml \
 VOLUME ["/data"]
 
 EXPOSE 8300
+# /healthz/ready prüft echte Bereitschaft (parsebare Graphen, Assets, Config) und
+# meldet 503 „unready" — anders als /ui/setup/status, das nur „läuft/eingerichtet"
+# beantwortet und einen Container mit kaputter graph.json fälschlich healthy nennt.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
-  CMD curl -sf http://127.0.0.1:8300/ui/setup/status || exit 1
+  CMD curl -sf http://127.0.0.1:8300/healthz/ready || exit 1
 
 # Hinweis: Im Container gibt es kein systemd — die Diagnose-/Mapping-Checks melden
 # systemctl-Abfragen daher als "unavailable" (im Code abgesichert, kein Crash).

@@ -127,7 +127,21 @@ def projects_list() -> list[dict]:
     archiviert = {a["name"]: a for a in config.archived_graphs()}
     out = []
     for name in _projects():
-        g = json.loads((KNOWLEDGE_ROOT / name / "graphify-out" / "graph.json").read_text())
+        try:
+            g = json.loads((KNOWLEDGE_ROOT / name / "graphify-out" / "graph.json").read_text())
+        except (OSError, ValueError):
+            # Eine einzige halb geschriebene/beschädigte graph.json darf NICHT den ganzen
+            # MCP-Aufruf mit einem Toolfehler abbrechen — sonst sieht der Client nicht mal
+            # die gesunden Projekte. Das defekte Projekt als solches ausweisen (wie der
+            # HTTP-Weg) und weitermachen.
+            eintrag = {"project": name, "nodes": 0, "edges": 0, "communities": 0, "status": "invalid"}
+            if name in archiviert:
+                eintrag["archived"] = True
+                eintrag["origin"] = archiviert[name]["origin"]
+            elif name not in registriert:
+                eintrag["unregistered"] = True
+            out.append(eintrag)
+            continue
         nodes = g.get("nodes", [])
         eintrag = {
             "project": name,
@@ -173,7 +187,9 @@ def _source_dir(project: str) -> Path | None:
 
 @mcp.tool
 def graph_query(project: str, question: str, budget_tokens: int = 1200) -> str:
-    """Answer a question about a project's codebase (hybrid: knowledge graph + relevant file excerpts)."""
+    """Retrieve graph context + relevant source excerpts for a question about a project's
+    codebase (hybrid: knowledge graph + file excerpts). Returns raw context (traversal,
+    nodes, excerpts) — the calling model composes the final answer from it."""
     if project not in _projects():
         raise ValueError(f"unknown project {project!r}; known: {_projects()}")
     # Leere/zu kurze Frage: die Web-UI (graph_ask) lehnt das ab — das MCP-Tool tat es
@@ -214,7 +230,16 @@ def report_get(project: str) -> str:
     """The full GRAPH_REPORT.md of a project (god nodes, communities, surprises)."""
     if project not in _projects():
         raise ValueError(f"unknown project {project!r}; known: {_projects()}")
-    return (KNOWLEDGE_ROOT / project / "graphify-out" / "GRAPH_REPORT.md").read_text()
+    report = KNOWLEDGE_ROOT / project / "graphify-out" / "GRAPH_REPORT.md"
+    # Ein Projekt gilt schon als vorhanden, sobald graph.json existiert — der Report
+    # kann fehlen (älteres/teilweises Mapping). Sauberer Hinweis statt ungefangenem
+    # Dateifehler / MCP-Toolfehler.
+    if not report.is_file():
+        return (
+            f"Für Projekt {project!r} wurde noch kein Graph-Report erzeugt. "
+            "Er entsteht beim (nächsten) Mapping-Lauf — solange ist nur der Graph selbst da."
+        )
+    return report.read_text()
 
 
 # Wie GRAPHIFY_BIN oben: konfigurierbar über paths.graphify_sync in der config.yaml,
@@ -543,6 +568,18 @@ def _register_project(path: Path) -> bool:
         entries = config.project_entries()
         if any(str(Path(e["path"]).expanduser()) == str(path) for e in entries):
             return False
+        # Projekte werden hub-intern über den (kleingeschriebenen) Ordner-Basenamen
+        # identifiziert — Graph-Zielordner, Locks, Antworten, Chunk-Index. Zwei ver-
+        # schiedene Pfade mit gleichem Basenamen (z. B. ~/a/api und ~/b/api, oder ein
+        # Notizprojekt „bookit" neben dem Code-Projekt „bookit") würden sich gegenseitig
+        # überschreiben. Wie der Web-UI-Add-Pfad (409) hier hart ablehnen.
+        basis = path.name.lower()
+        kollision = next((e for e in entries if Path(e["path"]).expanduser().name.lower() == basis), None)
+        if kollision is not None:
+            raise ValueError(
+                f"basename {path.name!r} is already registered for {kollision['path']!r} — "
+                "graphs are keyed by folder basename and would collide; use a different name"
+            )
         entries.append({"path": stored, "enabled": True})
         config.save_projects(entries)
     return True

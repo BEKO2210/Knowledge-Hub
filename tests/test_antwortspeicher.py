@@ -93,3 +93,23 @@ def test_gpt5_bekommt_den_richtigen_parameter():
     koerper = json.loads(llm._openai_body("gpt-5-mini", "s", "u", "max_completion_tokens"))
     assert "max_completion_tokens" in koerper
     assert "max_tokens" not in koerper
+
+
+def test_graph_stand_nutzt_nanosekunden():
+    """Regression (#4): der Cache-Schlüssel nutzte int(st_mtime) (Sekunden) — zwei Graph-
+    Generationen in derselben Sekunde bekamen denselben Schlüssel und lieferten eine alte
+    Antwort. Jetzt st_mtime_ns (ganzzahlig, keine Sekunden-Trunkierung)."""
+    import shutil
+
+    from api import knowledge
+
+    d = knowledge.KNOWLEDGE_ROOT / "nsproj" / "graphify-out"
+    d.mkdir(parents=True, exist_ok=True)
+    g = d / "graph.json"
+    g.write_text('{"nodes": [], "links": []}')
+    try:
+        stand = knowledge._graph_stand("nsproj")
+        assert stand == str(g.stat().st_mtime_ns)
+        assert len(stand) >= 16, "Nanosekunden-Stempel, nicht auf Sekunden gekürzt"
+    finally:
+        shutil.rmtree(knowledge.KNOWLEDGE_ROOT / "nsproj", ignore_errors=True)

@@ -228,3 +228,51 @@ def test_graph_query_lehnt_leere_frage_ab(monkeypatch):
         server.graph_query("demo", "was macht die Auth?")
     except ValueError as e:
         assert "question must not be empty" not in str(e)
+
+
+def test_register_project_lehnt_basename_kollision_ab(tmp_path):
+    """Regression (#2): Projekte werden hub-intern per Ordner-Basename identifiziert.
+    Zwei verschiedene Pfade mit gleichem Basename würden sich Graph, Locks und Antworten
+    teilen — jetzt hart abgelehnt (wie der Web-UI-Add-Pfad)."""
+    a = tmp_path / "kunde-a" / "api"
+    a.mkdir(parents=True)
+    b = tmp_path / "kunde-b" / "api"
+    b.mkdir(parents=True)
+    assert server._register_project(a) is True
+    with pytest.raises(ValueError, match="basename"):
+        server._register_project(b)
+
+
+def test_projects_list_ueberlebt_kaputte_graph_json():
+    """Regression (#3): eine einzige beschädigte graph.json darf projects_list (MCP) nicht
+    mit einem Toolfehler abbrechen — der Client sähe sonst nicht mal die gesunden Projekte."""
+    import shutil
+
+    root = server.KNOWLEDGE_ROOT
+    (root / "gutp" / "graphify-out").mkdir(parents=True, exist_ok=True)
+    (root / "gutp" / "graphify-out" / "graph.json").write_text('{"nodes": [], "links": []}')
+    (root / "kaputtp" / "graphify-out").mkdir(parents=True, exist_ok=True)
+    (root / "kaputtp" / "graphify-out" / "graph.json").write_text("{ kein json")
+    try:
+        liste = server.projects_list()
+        namen = {p["project"] for p in liste}
+        assert "gutp" in namen and "kaputtp" in namen
+        assert next(p for p in liste if p["project"] == "kaputtp").get("status") == "invalid"
+    finally:
+        shutil.rmtree(root / "gutp", ignore_errors=True)
+        shutil.rmtree(root / "kaputtp", ignore_errors=True)
+
+
+def test_report_get_ohne_report_gibt_hinweis():
+    """Regression (#7): ein Projekt gilt schon mit graph.json als vorhanden — fehlt
+    GRAPH_REPORT.md, lieferte report_get einen ungefangenen Dateifehler statt Hinweis."""
+    import shutil
+
+    root = server.KNOWLEDGE_ROOT
+    (root / "nurgraph" / "graphify-out").mkdir(parents=True, exist_ok=True)
+    (root / "nurgraph" / "graphify-out" / "graph.json").write_text('{"nodes": [], "links": []}')
+    try:
+        text = server.report_get("nurgraph")
+        assert "kein Graph-Report" in text
+    finally:
+        shutil.rmtree(root / "nurgraph", ignore_errors=True)

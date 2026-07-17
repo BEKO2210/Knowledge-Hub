@@ -54,6 +54,26 @@ SKIP_DIRS = {
     "backup-repo",  # verschlüsselte Off-Site-Backups ANDERER Projekte — nie ins Wissen
     "logs",
     "data",
+    # Laufzeit-/Cache-Zustand des Hubs selbst — kein Architekturwissen. Ohne diese
+    # Ausschlüsse zog der Chunk-Index answers/<fremdprojekt>/query-*.json und
+    # build-logs/runs/*.json als „FUNDSTELLEN" in Antworten (deckungsgleich mit
+    # extraction.SKIP_STATE_DIRS — beide Pipelines MÜSSEN identisch ausschließen).
+    "answers",
+    "chunk-index",
+    "build-logs",
+}
+# Veränderliche Zustands-Dateien liegen teils direkt im Projektordner (nicht in einem
+# SKIP_DIRS-Ordner) und sind .json/.log — würden also indexiert. Namentlich ausschließen.
+SKIP_STATE_FILES = {
+    "oauth_state.json",
+    "ratelimit.json",
+    "mapping_dismissed.json",
+    "errors_ack.json",
+    "audit.log",
+    "errors.log",
+    "errors.log.alt",
+    "vault.enc",
+    "vault.lock",
 }
 TEXT_SUFFIXES = {
     ".py",
@@ -345,6 +365,8 @@ def _iter_source_files(root: Path):
             continue
         if not (p.suffix.lower() in TEXT_SUFFIXES or p.name in SPECIAL_NAMES):
             continue
+        if p.name in SKIP_STATE_FILES:
+            continue  # Hub-Laufzeitzustand (oauth_state.json, audit.log …) ist kein Wissen
         if _is_secret_file(p.name):
             continue  # keine Zugangsdaten in Index, FUNDSTELLEN oder LLM-Kontext
         if p.is_symlink():

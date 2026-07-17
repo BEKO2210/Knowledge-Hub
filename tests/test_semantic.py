@@ -166,3 +166,22 @@ def test_kaputter_index_wirft_und_stoert_query_nicht_dauerhaft(fake_model, proje
 
     os.utime(graph, (graph.stat().st_atime, graph.stat().st_mtime + 10))
     assert "NODE" in semantic.query(out, "vault", budget=400)
+
+
+def test_chunk_index_schliesst_laufzeit_und_fremddaten_aus(tmp_path):
+    """Regression: der Chunk-Index (semantic._iter_source_files) schloss answers/,
+    build-logs/ und Hub-Zustandsdateien NICHT aus — so landeten fremde query-*.json und
+    Build-Logs als FUNDSTELLEN in Antworten. Muss deckungsgleich mit extraction sein."""
+    (tmp_path / "echt.py").write_text("def f():\n    return 1\n")
+    (tmp_path / "answers").mkdir()
+    (tmp_path / "answers" / "q.json").write_text('{"x": 1}')
+    (tmp_path / "build-logs").mkdir()
+    (tmp_path / "build-logs" / "run.json").write_text('{"x": 1}')
+    (tmp_path / "oauth_state.json").write_text('{"tokens": {}}')
+    gefunden = {p.name for p in semantic._iter_source_files(tmp_path)}
+    assert "echt.py" in gefunden
+    assert "q.json" not in gefunden, "answers/ darf nicht in den Chunk-Index"
+    assert "run.json" not in gefunden, "build-logs/ darf nicht in den Chunk-Index"
+    assert "oauth_state.json" not in gefunden, "Hub-Zustand darf nicht in den Chunk-Index"
+    for d in ("answers", "chunk-index", "build-logs", "backup-repo"):
+        assert d in semantic.SKIP_DIRS
