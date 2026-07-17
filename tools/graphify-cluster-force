@@ -51,7 +51,14 @@ def _importiere_export():
         if not shebang.startswith("#!"):
             raise ModuleNotFoundError(f"{graphify_bin} ohne Shebang — graphify-Interpreter unbekannt")
         os.environ["_GRAPHIFY_CF_REEXEC"] = "1"
-        os.execv(shebang[2:].split()[0], [os.path.abspath(sys.argv[0]), *sys.argv[1:]])
+        # execv-Argumentliste MUSS mit dem Interpreter selbst (argv[0] = Programmname)
+        # beginnen, dann folgt das auszuführende Skript. Fehlte der Interpreter als
+        # argv[0], interpretierte Python das erste Folgeargument (den Projektpfad) als
+        # Skript und brach mit „can't find '__main__' module in <projektpfad>" ab —
+        # der Nachtlauf scheiterte dann an jedem Projekt, sobald `env python3` ein
+        # graphify-loses Python traf (systemd-PATH-abhängig).
+        interp = shebang[2:].split()[0]
+        os.execv(interp, [interp, os.path.abspath(sys.argv[0]), *sys.argv[1:]])
         raise AssertionError("unreachable")  # execv kehrt nicht zurück
 
 
