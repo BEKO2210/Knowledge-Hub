@@ -504,6 +504,11 @@ BROWSE_ROOTS = [Path.home(), Path("/opt")]
 
 
 def _safe_dir(raw: str) -> Path | None:
+    if not raw.strip():
+        # Leerer/blanker Pfad: Path("").resolve() ergäbe das Arbeitsverzeichnis des
+        # Servers (das Release-Verzeichnis) und würde es so als „Projekt" registrieren.
+        # Blank hier abfangen, damit ALLE Aufrufer geschützt sind (BE-safe-dir-blank).
+        return None
     try:
         p = Path(raw).expanduser().resolve()
     except (OSError, RuntimeError):

@@ -236,3 +236,16 @@ def test_build_worker_faellt_bei_extraktionsfehler_auf_graphify_zurueck(monkeypa
     flach = [" ".join(c) for c in befehle]
     assert any("extraction.py" in f for f in flach)
     assert any(" update " in f"{f} " for f in flach), f"Fallback auf graphify update fehlt: {flach}"
+
+
+def test_safe_dir_lehnt_leeren_pfad_ab():
+    """Regression (BE-safe-dir-blank): ein leerer/blanker Pfad darf NICHT zum
+    Arbeitsverzeichnis des Servers auflösen und so das eigene Release-Verzeichnis
+    als Projekt registrieren. `Path("").resolve()` ergäbe sonst das CWD."""
+    from pathlib import Path
+
+    assert mapping._safe_dir("") is None
+    assert mapping._safe_dir("   ") is None
+    assert mapping._safe_dir("\t\n") is None
+    # Gültiges Verzeichnis unter den erlaubten Wurzeln funktioniert weiterhin.
+    assert mapping._safe_dir(str(Path.home())) == Path.home().resolve()
