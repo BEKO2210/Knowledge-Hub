@@ -236,6 +236,9 @@ def _as_metadata(request: Request) -> JSONResponse:
             "code_challenge_methods_supported": ["S256"],
             "token_endpoint_auth_methods_supported": ["none", "client_secret_post"],
             "scopes_supported": ["mcp"],
+            # RFC 9207: Wir hängen iss an die Autorisierungs-Antwort — Clients dürfen
+            # sich darauf verlassen (und strenge Clients verlangen es).
+            "authorization_response_iss_parameter_supported": True,
         }
     )
 
@@ -482,7 +485,16 @@ async def _authorize(request: Request):
             _save(state)
             ratelimit.record_success("login", ip)
             sep = "&" if "?" in params["redirect_uri"] else "?"
-            qs = urlencode({"code": code, **({"state": params["state"]} if params.get("state") else {})})
+            # iss (RFC 9207): Strenge Clients wie der ChatGPT-Connector verlangen die
+            # Issuer-Kennung in der Autorisierungs-Antwort (Schutz vor Mix-up-Angriffen)
+            # und lösen den Code sonst NICHT ein — der Login läuft dann endlos im Kreis.
+            qs = urlencode(
+                {
+                    "code": code,
+                    "iss": ISSUER,
+                    **({"state": params["state"]} if params.get("state") else {}),
+                }
+            )
             return RedirectResponse(f"{params['redirect_uri']}{sep}{qs}", status_code=302)
         if fehlversuch:
             import vault as _v
