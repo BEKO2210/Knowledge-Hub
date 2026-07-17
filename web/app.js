@@ -820,17 +820,17 @@ function renderBackend(backendId, selectedModel) {
   custom.style.display = useCustom ? 'block' : 'none';
   custom.value = useCustom ? selectedModel : '';
   $('backendnote').textContent = b.local
-    ? t('Lokales Modell — kostenlos, aber deutlich langsamer. Ollama muss auf dem Server laufen.')
+    ? (b.key_hint || t('Lokales Backend — kein API-Key nötig.'))
     : (b.key_hint || '');
   // Key-Karte
   $('keycard').style.display = 'block';
-  $('keytitle').textContent = b.local ? 'Ollama' : t2('{label}-Key', {label: b.label});
+  $('keytitle').textContent = b.local ? b.label : t2('{label}-Key', {label: b.label});
   $('keybackend').textContent = b.label;
-  $('keyhint').textContent = b.key_hint ? b.key_hint + ' ' : '';
+  $('keyhint').textContent = (!b.local && b.key_hint) ? b.key_hint + ' ' : '';
   $('keylink').href = b.key_url || '#';
   $('keylink').style.display = b.key_url ? 'inline' : 'none';
   $('keyokmsg').textContent = b.local
-    ? t('Ollama läuft lokal — kein Key nötig')
+    ? t2('{label} — kein API-Key nötig', {label: b.label})
     : t2('{label}-Key ist hinterlegt (Vault: {secret})', {label: b.label, secret: b.secret});
   $('keymissing').style.display = b.has_key ? 'none' : 'block';
   $('keyok').style.display = b.has_key ? 'flex' : 'none';

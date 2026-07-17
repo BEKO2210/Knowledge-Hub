@@ -73,8 +73,12 @@ DEFAULTS: dict = {
             # Keyloses Backend: mappt/labelt über die lokale Claude-Code-CLI (`claude -p`)
             # und das Abo statt über einen bezahlten API-Key. Kein secret/env nötig.
             "claude-cli": {
-                "label": "Claude Code (CLI, kein API-Key)",
+                "label": "Claude Code (CLI)",
                 "api": "claude-cli",
+                # local=True → die UI verlangt KEINEN Key (kein Onboarding, Health „ok"):
+                # dieses Backend authentifiziert über die Claude-Code-Anmeldung, nicht per Vault-Key.
+                "local": True,
+                "key_hint": "Nutzt deine Claude-Code-Anmeldung — kein API-Key und kein Guthaben nötig.",
                 "models": [{"id": "claude-code-plan", "hint": "über Claude-Code-Abo"}],
             },
         },
