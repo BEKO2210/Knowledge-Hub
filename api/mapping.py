@@ -499,6 +499,12 @@ async def mapping_run(request: Request) -> JSONResponse:
     _, active = _sysctl("is-active", _MAP_SERVICE)
     if active in ("active", "activating"):
         return JSONResponse({"error": T("Läuft bereits")}, status_code=409)
+    # Startzeit hinterlegen, damit der Fortschritt diesen Lauf als „manuell" erkennt.
+    try:
+        NIGHTLY_LOG_DIR.mkdir(parents=True, exist_ok=True)
+        _MANUAL_MARKER.write_text(str(time.time()), encoding="utf-8")
+    except Exception:  # noqa: BLE001 - Marker ist nur Komfort, nie den Start blockieren
+        pass
     code, out = _sysctl("start", "--no-block", _MAP_SERVICE)
     vault.audit("MAPPING-RUN", "manuell gestartet", client="web-ui")
     if code != 0:
@@ -1183,9 +1189,69 @@ def _read_tail(f: Path, max_bytes: int = 256 * 1024) -> str:
     return data.decode("utf-8", errors="replace")
 
 
+# Manuell gestartete Läufe hinterlassen hier ihre Startzeit (epoch) — so kann der
+# Fortschritt „manuell vs. automatisch (Timer)" unterscheiden, ohne das Nachtlauf-
+# Skript anzufassen.
+_MANUAL_MARKER = NIGHTLY_LOG_DIR / ".manual-trigger"
+
+
+def _run_progress(log_path: Path) -> dict:
+    """Fortschritt des jüngsten Nachtlaufs aus dem Log ableiten (Projekt X/Y + Schritt +
+    Trigger). Rein lesend — verändert den laufenden Nachtlauf nicht."""
+    prog = {"total": 0, "done": 0, "index": 0, "current": "", "step": "", "trigger": "", "backend": ""}
+    try:
+        lines = _read_tail(log_path).splitlines()
+    except Exception:  # noqa: BLE001
+        return prog
+    start = None
+    for i in range(len(lines) - 1, -1, -1):
+        mt = _RUN_START_RE.search(lines[i])
+        if mt:
+            start, prog["backend"] = i, (mt.group(2) or "")
+            started_iso = mt.group(1)
+            break
+    if start is None:
+        return prog
+    run = lines[start:]
+    ended = any(_RUN_DONE_RE.search(x) for x in run)
+    projekte = [m.group(1) for x in run if (m := _PROJ_LINE_RE.match(x)) and m.group(1).startswith("/")]
+    synced = sum(1 for x in run if x.startswith("SYNC project="))
+    try:
+        total = len([p for p in config.load()["mapping"].get("projects", []) if p.get("enabled", True)])
+    except Exception:  # noqa: BLE001
+        total = 0
+    prog["total"] = max(total, len(projekte))
+    prog["index"] = len(projekte)
+    prog["done"] = prog["total"] if ended else synced
+    prog["current"] = projekte[-1].rstrip("/").split("/")[-1] if projekte else ""
+    tail = " ".join(run[-8:]).lower()
+    if ended:
+        prog["step"] = "fertig"
+    elif "sync project=" in tail:
+        prog["step"] = "Synchronisieren"
+    elif "cluster" in tail or "labeling" in tail:
+        prog["step"] = "Clustering & Labeling"
+    elif "hub-extract" in tail or "extrah" in tail:
+        prog["step"] = "Extraktion (Claude Code)"
+    else:
+        prog["step"] = "läuft…"
+    try:
+        from datetime import datetime
+
+        run_epoch = datetime.fromisoformat(started_iso).timestamp()
+        if _MANUAL_MARKER.exists():
+            mk = float(_MANUAL_MARKER.read_text().strip() or 0)
+            prog["trigger"] = "manuell" if abs(mk - run_epoch) < 180 else "automatisch"
+        else:
+            prog["trigger"] = "automatisch"
+    except Exception:  # noqa: BLE001
+        prog["trigger"] = ""
+    return prog
+
+
 async def mapping_log(request: Request) -> JSONResponse:
     logs = sorted(NIGHTLY_LOG_DIR.glob("nightly-*.log"))
     if not logs:
-        return JSONResponse({"lines": [], "file": None})
+        return JSONResponse({"lines": [], "file": None, "progress": {}})
     lines = _read_tail(logs[-1]).splitlines()[-120:]
-    return JSONResponse({"lines": lines, "file": logs[-1].name})
+    return JSONResponse({"lines": lines, "file": logs[-1].name, "progress": _run_progress(logs[-1])})

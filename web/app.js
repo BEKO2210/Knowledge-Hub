@@ -881,6 +881,16 @@ async function loadMapping() {
     const log = await holeJson('/ui/api/mapping/log');
     $('maplog').textContent = log.lines.length ? log.lines.join('\n') : t('(noch kein Lauf protokolliert)');
     $('maplog').scrollTop = $('maplog').scrollHeight;
+    const pr = log.progress || {};
+    if (pr.total) {
+      const pct = Math.max(0, Math.min(100, Math.round((pr.done / pr.total) * 100)));
+      $('mapprogbar').style.width = pct + '%';
+      $('mapprogpct').textContent = pr.done + ' / ' + pr.total + ' · ' + pct + '%';
+      const trig = pr.trigger ? ' · ' + t(pr.trigger === 'manuell' ? 'manuell gestartet' : 'automatisch (Timer)') : '';
+      $('mapproginfo').textContent =
+        t2('Projekt {i}/{n}: {cur}', {i: pr.index, n: pr.total, cur: pr.current || '—'}) +
+        (pr.step ? ' · ' + pr.step : '') + (pr.backend ? ' · ' + pr.backend : '') + trig;
+    }
   } catch {}
   loadHistory();
   clearInterval(mapPoll);
